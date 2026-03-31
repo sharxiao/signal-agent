@@ -13,7 +13,7 @@ signal-support-agent/
 │       ├── embedder.py        # Embed chunks + store in ChromaDB
 │       ├── retriever.py       # Query ChromaDB
 │       ├── pipeline.py        # Full ingestion pipeline (calls ingest → chunk → embed)
-│       ├── router.py          # Intent classification (Member 3)
+│       ├── router.py          # Intent classification
 │       ├── actions.py         # Mock actions
 │       └── guardrails.py      # Safety layer
 ├── data/
