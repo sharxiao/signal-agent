@@ -1,7 +1,9 @@
 # Signal_Agent
+
 This is the final deliverable for RSM8430
 
 ## Project Structure
+
 ```
 signal-support-agent/
 ├── src/
@@ -12,7 +14,7 @@ signal-support-agent/
 │       ├── chunker.py         # Clean HTML + chunk text
 │       ├── embedder.py        # Embed chunks + store in ChromaDB
 │       ├── retriever.py       # Query ChromaDB
-│       ├── pipeline.py        # Full ingestion pipeline (calls ingest → chunk → embed)
+│       ├── pipeline.py        # Full ingestion pipeline (calls ingest -> chunk -> embed)
 │       ├── router.py          # Intent classification
 │       ├── actions.py         # Mock actions
 │       └── guardrails.py      # Safety layer

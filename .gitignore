@@ -1,0 +1,18 @@
+# generated data — don't commit this! you can regenerate by running pipeline
+data/chromadb/
+data/raw/
+data/chunks/
+ 
+# Python
+__pycache__/
+*.py[cod]
+*.egg-info/
+.venv/
+venv/
+.env
+ 
+# OS
+.DS_Store
+ 
+# virtual environment
+venv311
