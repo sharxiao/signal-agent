@@ -46,7 +46,7 @@ def run_pipeline(skip_ingest: bool = False, reset_db: bool = False) -> None:
  
     # step 1: ingest
     if skip_ingest and RAW_ARTICLES_FILE.exists():
-        log.info("── Step 1: Loading raw data from disk (--skip-ingest) ──")
+        log.info("Step 1: Loading raw data from disk (--skip-ingest)")
         articles, section_map = load_raw_articles()
     else:
         log.info("Step 1: Fetching articles from Zendesk API")

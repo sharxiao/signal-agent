@@ -10,6 +10,7 @@ from typing import Optional
 import chromadb
 from chromadb.config import Settings
 from sentence_transformers import SentenceTransformer
+
  
 # import relevant constant vars
 from src.agent.config import (
@@ -21,6 +22,7 @@ from src.agent.chunker import load_chunks
  
 logging.basicConfig(level=logging.INFO, format="%(levelname)s: %(message)s")
 log = logging.getLogger(__name__)
+logging.getLogger("chromadb").setLevel(logging.CRITICAL)
  
 # batch size for embedding to keep memory usage reasonable
 EMBED_BATCH_SIZE = 64

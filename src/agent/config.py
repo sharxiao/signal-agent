@@ -4,6 +4,9 @@ all in one place for easy modification
 """
 
 from pathlib import Path
+import os
+
+os.environ["ANONYMIZED_TELEMETRY"] = "False"
 
 # project root and data directories
 ROOT_DIR = Path(__file__).resolve()         # signal_agent/
