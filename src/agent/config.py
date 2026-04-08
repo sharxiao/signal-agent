@@ -41,13 +41,16 @@ CHUNKS_FILE       = CHUNKS_DIR / "chunks.json"
 CHUNK_SIZE    = 400
 CHUNK_OVERLAP = 50
 
-# embedding model
-EMBEDDING_MODEL = "all-MiniLM-L6-v2"   # sentence-transformers model
+# embedding endpoint
+EMBEDDING_BASE_URL = "https://rsm-8430-a2.bjlkeng.io"
+EMBEDDING_API_KEY  = 0 # replace with your own student number       
+EMBEDDING_MODEL    = "text-embedding-ada-002"  # model name served by the endpoint
 
 # ChromaDB
 CHROMA_COLLECTION_NAME = "signal_support"
 
 # LLM endpoint
+LLM_BASE_URL   = "https://rsm-8430-finalproject.bjlkeng.io"
+LLM_API_KEY    = 0 # replace with your own student number
 LLM_MODEL      = "qwen3-30b-a3b-fp8"
-LLM_BASE_URL   = "http://localhost:11434"   # update later with actual course endpoint
 LLM_MAX_TOKENS = 1024

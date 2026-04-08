@@ -1,6 +1,5 @@
 """
 this file embeds text chunks and stores them in ChromaDB.
-it also uses sentence-transformers for local embeddings.
 ChromaDB is stored persistently at data/chromadb/
 """
 
@@ -9,13 +8,15 @@ from typing import Optional
  
 import chromadb
 from chromadb.config import Settings
-from sentence_transformers import SentenceTransformer
+from openai import OpenAI
 
  
 # import relevant constant vars
 from src.agent.config import (
     CHROMADB_DIR,
     CHROMA_COLLECTION_NAME,
+    EMBEDDING_BASE_URL,
+    EMBEDDING_API_KEY,
     EMBEDDING_MODEL,
 )
 from src.agent.chunker import load_chunks
@@ -25,9 +26,17 @@ log = logging.getLogger(__name__)
 logging.getLogger("chromadb").setLevel(logging.CRITICAL)
  
 # batch size for embedding to keep memory usage reasonable
-EMBED_BATCH_SIZE = 64
+EMBED_BATCH_SIZE = 32
+
+
+def get_embedding_client() -> OpenAI:
+    """Return an OpenAI client pointed at the course embedding endpoint."""
+    return OpenAI(
+        base_url=EMBEDDING_BASE_URL,
+        api_key=EMBEDDING_API_KEY,
+    )
  
- 
+
 def get_chroma_client() -> chromadb.PersistentClient:
     """Return a persistent ChromaDB client pointed at data/chromadb/."""
     return chromadb.PersistentClient(
@@ -58,8 +67,20 @@ def get_or_create_collection(client: chromadb.PersistentClient, reset: bool = Fa
     )
     return collection
  
- 
-def embed_and_store(chunks: list[dict], collection: chromadb.Collection, model: SentenceTransformer) -> None:
+
+def embed_texts(texts: list[str], embedding_client: OpenAI) -> list[list[float]]:
+    """
+    Call the course embedding API and return a list of embedding vectors.
+    One vector per input text.
+    """
+    response = embedding_client.embeddings.create(
+        model=EMBEDDING_MODEL,
+        input=texts,
+    )
+    return [item.embedding for item in response.data]
+
+
+def embed_and_store(chunks: list[dict], collection: chromadb.Collection, embedding_client: OpenAI) -> None:
     """
     Embed all chunks in batches and upsert them into ChromaDB.
     Uses upsert so re-running is safe (no duplicates).
@@ -85,7 +106,7 @@ def embed_and_store(chunks: list[dict], collection: chromadb.Collection, model: 
             for c in batch
         ]
  
-        embeddings = model.encode(texts, show_progress_bar=False).tolist()
+        embeddings = embed_texts(texts, embedding_client)
  
         collection.upsert(
             ids=ids,
@@ -99,14 +120,12 @@ def embed_and_store(chunks: list[dict], collection: chromadb.Collection, model: 
             f"({batch_start + len(batch)}/{total})"
         )
  
-    log.info(
-        f"Done. Collection now contains {collection.count()} chunks."
-    )
+    log.info(f"Done. Collection now contains {collection.count()} chunks.")
  
  
 def query_collection(
     collection: chromadb.Collection,
-    model: SentenceTransformer,
+    embedding_client: OpenAI,
     query: str,
     n_results: int = 5,
     platform_filter: Optional[str] = None,
@@ -120,7 +139,7 @@ def query_collection(
         text, source_url, article_title, category, platform,
         section_heading, score
     """
-    query_embedding = model.encode([query]).tolist()
+    query_embedding = embed_texts([query], embedding_client)[0]
  
     # build optional metadata filter
     where = {}
@@ -130,7 +149,7 @@ def query_collection(
         where["category"] = category_filter
  
     kwargs = {
-        "query_embeddings": query_embedding,
+        "query_embeddings": [query_embedding],
         "n_results": n_results,
         "include": ["documents", "metadatas", "distances"],
     }
@@ -161,15 +180,15 @@ def query_collection(
  
 if __name__ == "__main__":
     chunks     = load_chunks()
-    model      = SentenceTransformer(EMBEDDING_MODEL)
-    client     = get_chroma_client()
-    collection = get_or_create_collection(client, reset=True)
+    embedding_client = get_embedding_client()
+    chroma_client    = get_chroma_client()
+    collection = get_or_create_collection(chroma_client, reset=True)
  
-    embed_and_store(chunks, collection, model)
+    embed_and_store(chunks, collection, embedding_client)
  
     # quick test
     log.info("\nQuick test — querying: 'how do I backup my messages'")
-    results = query_collection(collection, model, "how do I backup my messages")
+    results = query_collection(collection, embedding_client, "how do I backup my messages")
     for i, r in enumerate(results, 1):
         log.info(f"  [{i}] score={r['score']} | {r['article_title']} "
                  f"| {r['platform']} | {r['category']}")

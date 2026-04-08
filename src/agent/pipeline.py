@@ -10,13 +10,8 @@ in order, these steps are run...
 import argparse
 import logging
  
-from sentence_transformers import SentenceTransformer
- 
 # import relevant constants and functions
-from src.agent.config import (
-    EMBEDDING_MODEL,
-    RAW_ARTICLES_FILE,
-)
+from src.agent.config import RAW_ARTICLES_FILE
 from src.agent.ingest import (
     fetch_all_articles,
     fetch_sections,
@@ -25,6 +20,7 @@ from src.agent.ingest import (
 )
 from src.agent.chunker import build_chunks, save_chunks, load_chunks
 from src.agent.embedder import (
+    get_embedding_client,
     get_chroma_client,
     get_or_create_collection,
     embed_and_store,
@@ -64,9 +60,9 @@ def run_pipeline(skip_ingest: bool = False, reset_db: bool = False) -> None:
  
     # step 3: embed + store
     log.info("Step 3: Embedding and storing in ChromaDB")
-    model      = SentenceTransformer(EMBEDDING_MODEL)
-    client     = get_chroma_client()
-    collection = get_or_create_collection(client, reset=reset_db)
+    embedding_client = get_embedding_client()
+    client           = get_chroma_client()
+    collection       = get_or_create_collection(client, reset=reset_db)
  
     # skip embedding if collection already populated and not resetting
     if collection.count() > 0 and not reset_db:
@@ -75,7 +71,7 @@ def run_pipeline(skip_ingest: bool = False, reset_db: bool = False) -> None:
             "Use --reset-db to rebuild."
         )
     else:
-        embed_and_store(chunks, collection, model)
+        embed_and_store(chunks, collection, embedding_client)
  
     # fin
     log.info("Pipeline complete")
@@ -84,7 +80,7 @@ def run_pipeline(skip_ingest: bool = False, reset_db: bool = False) -> None:
     # test
     log.info("\Quick test — querying: 'notifications not working android'")
     results = query_collection(
-        collection, model, "notifications not working android", n_results=3
+        collection, embedding_client, "notifications not working android", n_results=3
     )
     for i, r in enumerate(results, 1):
         log.info(
@@ -95,20 +91,20 @@ def run_pipeline(skip_ingest: bool = False, reset_db: bool = False) -> None:
  
 def get_retriever():
     """
-    Return a (collection, model) tuple for use by other modules
+    Return a (collection, embedding_client) tuple for use by other modules
     (retriever.py, router.py, etc.).
  
     Example:
         from src.agent.pipeline import get_retriever
         from src.agent.embedder import query_collection
  
-        collection, model = get_retriever()
-        results = query_collection(collection, model, "how to backup")
+        collection, embedding_client = get_retriever()
+        results = query_collection(collection, embedding_client, "how to backup")
     """
-    model      = SentenceTransformer(EMBEDDING_MODEL)
-    client     = get_chroma_client()
-    collection = get_or_create_collection(client, reset=False)
-    return collection, model
+    embedding_client = get_embedding_client()
+    client           = get_chroma_client()
+    collection       = get_or_create_collection(client, reset=False)
+    return collection, embedding_client
  
  
 if __name__ == "__main__":
