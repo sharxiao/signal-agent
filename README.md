@@ -47,8 +47,8 @@ signal-support-agent/
 
 ## Running the pipeline
 
-Replace the API key with your own student number in `config.py`.
-Build the knowledge base (fetch from Zendesk API, chunk, embed, store in ChromaDB):
+First, replace the API key with your own student number in `config.py`.
+Then, build the knowledge base (fetch from Zendesk API, chunk, embed, store in ChromaDB):
 
 ```bash
    python -m src.agent.pipeline
