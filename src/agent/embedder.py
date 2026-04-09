@@ -128,6 +128,9 @@ def query_collection(
         where["platform"] = {"$in": [platform_filter, "All"]}
     if category_filter:
         where["category"] = category_filter
+
+    if len(where) > 1:
+        where = {"$and": [{key: value} for key, value in where.items()]}
  
     kwargs = {
         "query_embeddings": query_embedding,

@@ -6,6 +6,10 @@ all in one place for easy modification
 from pathlib import Path
 import os
 
+from dotenv import load_dotenv
+
+load_dotenv()
+
 os.environ["ANONYMIZED_TELEMETRY"] = "False"
 
 # project root and data directories
@@ -48,6 +52,7 @@ EMBEDDING_MODEL = "all-MiniLM-L6-v2"   # sentence-transformers model
 CHROMA_COLLECTION_NAME = "signal_support"
 
 # LLM endpoint
-LLM_MODEL      = "qwen3-30b-a3b-fp8"
-LLM_BASE_URL   = "http://localhost:11434"   # update later with actual course endpoint
+LLM_MODEL = "qwen3-30b-a3b-fp8"
+LLM_BASE_URL = "https://rsm-8430-finalproject.bjlkeng.io" # course project endpoint
 LLM_MAX_TOKENS = 1024
+LLM_API_KEY = os.getenv("LLM_API_KEY", "")
