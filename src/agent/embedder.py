@@ -73,10 +73,12 @@ def embed_texts(texts: list[str], embedding_client: OpenAI) -> list[list[float]]
     Call the course embedding API and return a list of embedding vectors.
     One vector per input text.
     """
-    response = embedding_client.embeddings.create(
-        model=EMBEDDING_MODEL,
-        input=texts,
-    )
+    kwargs = {"input": texts}
+    if EMBEDDING_MODEL:
+        kwargs["model"] = EMBEDDING_MODEL
+    else:
+        kwargs["model"] = "text-embedding-ada-002"  # OpenAI library requires this field
+    response = embedding_client.embeddings.create(**kwargs)
     return [item.embedding for item in response.data]
 
 

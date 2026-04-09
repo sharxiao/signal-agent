@@ -25,6 +25,7 @@ signal-support-agent/
 ├── tests/
 │   └── test_pipeline.py
 ├── app.py                     # Streamlit UI
+├── ID.txt                     # API authentication
 ├── requirements.txt
 └── README.md                  # This file
 ```
@@ -45,10 +46,13 @@ signal-support-agent/
    pip install -r requirements.txt
 ```
 
+## Authentication
+
+Create an `ID.txt` file at the project root - similar to assignment 2. This file will be gitignored. Add your ID on line 1 to be used as the API key.
+
 ## Running the pipeline
 
-First, replace the API key with your own student number in `config.py`.
-Then, build the knowledge base (fetch from Zendesk API, chunk, embed, store in ChromaDB):
+Build the knowledge base (fetch from Zendesk API, chunk, embed, store in ChromaDB):
 
 ```bash
    python -m src.agent.pipeline

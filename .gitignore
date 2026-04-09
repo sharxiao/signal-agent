@@ -17,3 +17,6 @@ venv/
 # virtual environment
 venv311
 venv
+
+# student id - create this file locally in the root folder
+ID.txt
