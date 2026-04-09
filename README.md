@@ -25,34 +25,47 @@ signal-support-agent/
 ├── tests/
 │   └── test_pipeline.py
 ├── app.py                     # Streamlit UI
+├── ID.txt                     # API authentication
 ├── requirements.txt
 └── README.md                  # This file
 ```
 
 ## Setup
+
 1. Clone the repo and navigate to the project root.
 2. Create and activate a virtual environment:
+
 ```bash
    python -m venv venv
-   source venv/bin/activate 
+   source venv/bin/activate
 ```
+
 3. Install dependencies:
+
 ```bash
    pip install -r requirements.txt
 ```
 
+## Authentication
+
+Create an `ID.txt` file at the project root - similar to assignment 2. This file will be gitignored. Add your ID on line 1 to be used as the API key.
+
 ## Running the pipeline
+
 Build the knowledge base (fetch from Zendesk API, chunk, embed, store in ChromaDB):
+
 ```bash
    python -m src.agent.pipeline
 ```
 
 If the raw data has already been fetched (skip API call):
+
 ```bash
    python -m src.agent.pipeline --skip-ingest
 ```
 
 Wipe and rebuild ChromaDB from scratch:
+
 ```bash
    python -m src.agent.pipeline --reset-db
 ```
@@ -86,21 +99,24 @@ Example Python usage:
 ```
 
 ## Configuration
+
 If you need to change any configuration settings, you can find all configurable parameters in `src/agent/config.py`:
+
 - chunk size and overlap
 - embedding model name
 - ChromaDB collection name
 - LLM endpoint
 
-
 ## Interface
-To query the knowledge base:
-```python
-   from src.agent.embedder import query_collection
-   from src.agent.pipeline import get_retriever
 
-   collection, model = get_retriever()
-   results = query_collection(collection, model, "how do I backup my messages")
+To query the knowledge base:
+
+```python
+   from src.agent.pipeline import get_retriever
+   from src.agent.embedder import query_collection
+
+   collection, embedding_client = get_retriever()
+   results = query_collection(collection, embedding_client, "how to backup")
 
    # each result will have text, source_url, article_title, category, platform,
    # section_heading, and score
@@ -118,8 +134,6 @@ To query the knowledge base:
 | `section_heading` | str | Nearest heading above this chunk |
 | `score` | float | Cosine similarity (0–1, higher is better) |
 
-
 ## Notes (delete later)
-- `data/` is gitignored - run the pipeline locally to regenerate it
-- update `LLM_BASE_URL` in `config.py` before running any LLM-dependent code
 
+- `data/` is gitignored - run the pipeline locally to regenerate it

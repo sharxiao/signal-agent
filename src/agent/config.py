@@ -45,14 +45,43 @@ CHUNKS_FILE       = CHUNKS_DIR / "chunks.json"
 CHUNK_SIZE    = 400
 CHUNK_OVERLAP = 50
 
-# embedding model
-EMBEDDING_MODEL = "all-MiniLM-L6-v2"   # sentence-transformers model
+def _read_student_id(id_file: str = "ID.txt") -> str:
+    """Read student ID from ID.txt (line 1)."""
+    id_path = Path(id_file)
+    if not id_path.exists():
+        raise FileNotFoundError(
+            "ID.txt not found. Create it at the project root with:\n"
+            "  Line 1: student ID"
+        )
+    with open(id_path, "r") as f:
+        lines = f.readlines()
+        if len(lines) < 1:
+            raise ValueError("Please add your student ID on line 1.")
+        student_id = lines[0].strip()
+        if not student_id:
+            raise ValueError("Student ID cannot be empty!")
+        return student_id
+
+# api authentication
+STUDENT_ID = _read_student_id()
+
+# embedding endpoint
+EMBEDDING_BASE_URL = "https://rsm-8430-a2.bjlkeng.io"
+EMBEDDING_API_KEY  = STUDENT_ID
+EMBEDDING_MODEL = ""
 
 # ChromaDB
 CHROMA_COLLECTION_NAME = "signal_support"
 
 # LLM endpoint
+<<<<<<< HEAD
 LLM_MODEL = "qwen3-30b-a3b-fp8"
 LLM_BASE_URL = "https://rsm-8430-finalproject.bjlkeng.io" # course project endpoint
 LLM_MAX_TOKENS = 1024
 LLM_API_KEY = os.getenv("LLM_API_KEY", "")
+=======
+LLM_BASE_URL   = "https://rsm-8430-finalproject.bjlkeng.io"
+LLM_API_KEY    = STUDENT_ID
+LLM_MODEL      = "qwen3-30b-a3b-fp8"
+LLM_MAX_TOKENS = 1024
+>>>>>>> main

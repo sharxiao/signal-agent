@@ -1,4 +1,4 @@
-# generated data — don't commit this! you can regenerate by running pipeline
+# generated data — you can regenerate by running pipeline
 data/chromadb/
 data/raw/
 data/chunks/
@@ -17,3 +17,6 @@ venv/
 # virtual environment
 venv311
 venv
+
+# student id - create this file locally in the root folder
+ID.txt
