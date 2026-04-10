@@ -74,14 +74,7 @@ EMBEDDING_MODEL = ""
 CHROMA_COLLECTION_NAME = "signal_support"
 
 # LLM endpoint
-<<<<<<< HEAD
-LLM_MODEL = "qwen3-30b-a3b-fp8"
-LLM_BASE_URL = "https://rsm-8430-finalproject.bjlkeng.io" # course project endpoint
-LLM_MAX_TOKENS = 1024
-LLM_API_KEY = os.getenv("LLM_API_KEY", "")
-=======
 LLM_BASE_URL   = "https://rsm-8430-finalproject.bjlkeng.io"
 LLM_API_KEY    = STUDENT_ID
 LLM_MODEL      = "qwen3-30b-a3b-fp8"
 LLM_MAX_TOKENS = 1024
->>>>>>> main
