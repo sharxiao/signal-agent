@@ -78,7 +78,7 @@ def run_pipeline(skip_ingest: bool = False, reset_db: bool = False) -> None:
     log.info(f"   ChromaDB collection: {collection.count()} chunks")
  
     # test
-    log.info("\Quick test — querying: 'notifications not working android'")
+    log.info("Quick test — querying: 'notifications not working android'")
     results = query_collection(
         collection, embedding_client, "notifications not working android", n_results=3
     )

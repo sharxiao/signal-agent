@@ -25,6 +25,7 @@ from src.agent.config import (
     LLM_BASE_URL,
     LLM_MAX_TOKENS,
     LLM_MODEL,
+    DEFAULT_TOP_K,
 )
 from src.agent.embedder import query_collection
 from src.agent.pipeline import get_retriever
@@ -33,7 +34,7 @@ logging.basicConfig(level=logging.INFO, format="%(levelname)s: %(message)s")
 log = logging.getLogger(__name__)
 
 # Conservative defaults for the first version
-DEFAULT_TOP_K = 5
+
 MIN_TOP_SCORE = 0.30
 MIN_AVG_TOP3_SCORE = 0.22
 REQUEST_TIMEOUT = 60
@@ -137,6 +138,15 @@ def _extract_json(text: str) -> dict[str, Any]:
     Best-effort JSON extraction.
     Handles models that may wrap JSON in markdown fences or extra text.
     """
+    if text is None:
+        return {
+            "answer": "",
+            "grounded": False,
+            "fallback": True,
+            "citations": [],
+            "reason_if_fallback": "Model returned empty content.",
+        }
+
     text = text.strip()
 
     # Remove markdown fences if present
@@ -194,8 +204,46 @@ def _call_llm(messages: list[dict[str, str]]) -> dict[str, Any]:
     )
     response.raise_for_status()
     data = response.json()
-    content = data["choices"][0]["message"]["content"]
-    return _extract_json(content)
+    choices = data.get("choices", [])
+    if not choices:
+        raise ValueError(f"No choices returned from LLM: {data}")
+
+    message = choices[0].get("message", {}) or {}
+
+    content = message.get("content")
+
+    if isinstance(content, list):
+        parts = []
+        for item in content:
+            if isinstance(item, dict) and item.get("type") == "text":
+                parts.append(item.get("text", ""))
+        content = "\n".join(parts).strip()
+
+    if not content:
+        content = message.get("reasoning_content")
+
+    if isinstance(content, list):
+        parts = []
+        for item in content:
+            if isinstance(item, dict) and item.get("type") == "text":
+                parts.append(item.get("text", ""))
+            else:
+                parts.append(str(item))
+        content = "\n".join(parts).strip()
+
+    if not content:
+        raise ValueError(f"LLM returned empty content. Full response: {data}")
+
+    try:
+        return _extract_json(content)
+    except Exception:
+        return {
+            "answer": content,
+            "grounded": False,
+            "fallback": True,
+            "citations": [],
+            "reason_if_fallback": "Model returned non-JSON text.",
+        }
 
 
 def _evidence_is_weak(results: list[dict]) -> bool:
@@ -249,9 +297,9 @@ def answer_knowledge_query(
 
     collection, model = get_retriever()
     results = query_collection(
-        collection=collection,
-        model=model,
-        query=query,
+        collection,
+        model,
+        query,
         n_results=n_results,
         platform_filter=platform_filter,
         category_filter=category_filter,

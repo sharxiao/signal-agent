@@ -43,7 +43,8 @@ CHUNKS_FILE       = CHUNKS_DIR / "chunks.json"
 
 # chunking parameters
 CHUNK_SIZE    = 400
-CHUNK_OVERLAP = 50
+CHUNK_OVERLAP = 100
+DEFAULT_TOP_K = 3
 
 def _read_student_id(id_file: str = "ID.txt") -> str:
     """Read student ID from ID.txt (line 1)."""
