@@ -6,6 +6,10 @@ all in one place for easy modification
 from pathlib import Path
 import os
 
+from dotenv import load_dotenv
+
+load_dotenv()
+
 os.environ["ANONYMIZED_TELEMETRY"] = "False"
 
 # project root and data directories
@@ -39,7 +43,8 @@ CHUNKS_FILE       = CHUNKS_DIR / "chunks.json"
 
 # chunking parameters
 CHUNK_SIZE    = 400
-CHUNK_OVERLAP = 50
+CHUNK_OVERLAP = 100
+DEFAULT_TOP_K = 3
 
 def _read_student_id(id_file: str = "ID.txt") -> str:
     """Read student ID from ID.txt (line 1)."""

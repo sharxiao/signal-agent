@@ -70,6 +70,34 @@ Wipe and rebuild ChromaDB from scratch:
    python -m src.agent.pipeline --reset-db
 ```
 
+## Running the conversational support agent
+After the knowledge base is built, start a local CLI chat:
+```bash
+   python -m src.agent.conversation
+```
+
+Or launch the Streamlit interface:
+```bash
+   streamlit run app.py
+```
+
+The agent combines:
+- grounded RAG answers from the Signal Help Center
+- intent routing for greetings, support questions, and account/action-style requests
+- lightweight guardrails for unsafe or unsupported requests
+- citation-ready sources for the retrieved help articles
+- mocked support actions for flows such as transfer, backup, verification, PIN, and account deletion guidance
+
+Example Python usage:
+```python
+   from src.agent.conversation import SupportAgent
+
+   agent = SupportAgent()
+   response = agent.chat("How do I transfer Signal to my new iPhone?")
+   print(response["answer"])
+   print(response["sources"])
+```
+
 ## Configuration
 
 If you need to change any configuration settings, you can find all configurable parameters in `src/agent/config.py`:

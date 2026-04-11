@@ -18,8 +18,10 @@ from src.agent.config import (
     EMBEDDING_BASE_URL,
     EMBEDDING_API_KEY,
     EMBEDDING_MODEL,
+    DEFAULT_TOP_K,
 )
 from src.agent.chunker import load_chunks
+
  
 logging.basicConfig(level=logging.INFO, format="%(levelname)s: %(message)s")
 log = logging.getLogger(__name__)
@@ -30,10 +32,11 @@ EMBED_BATCH_SIZE = 32
 
 
 def get_embedding_client() -> OpenAI:
-    """Return an OpenAI client pointed at the course embedding endpoint."""
     return OpenAI(
         base_url=EMBEDDING_BASE_URL,
         api_key=EMBEDDING_API_KEY,
+        timeout=60.0,
+        max_retries=3,
     )
  
 
@@ -129,7 +132,7 @@ def query_collection(
     collection: chromadb.Collection,
     embedding_client: OpenAI,
     query: str,
-    n_results: int = 5,
+    n_results: int = DEFAULT_TOP_K, ## k = 5(default)
     platform_filter: Optional[str] = None,
     category_filter: Optional[str] = None,
 ) -> list[dict]:
@@ -149,6 +152,9 @@ def query_collection(
         where["platform"] = {"$in": [platform_filter, "All"]}
     if category_filter:
         where["category"] = category_filter
+
+    if len(where) > 1:
+        where = {"$and": [{key: value} for key, value in where.items()]}
  
     kwargs = {
         "query_embeddings": [query_embedding],
