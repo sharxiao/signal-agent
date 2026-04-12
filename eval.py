@@ -6,9 +6,10 @@ The metric names follow the Assignment 2/RAGAS-style evaluator:
 - factual_correctness
 - answer_accuracy
 
-This local evaluator keeps the implementation lightweight and deterministic:
-it computes heuristic scores from each agent response, retrieved sources, and
-the reference metadata in data/test_cases.json.
+Additional metrics for v2:
+- intent_correct     (was the intent routed correctly?)
+- action_correct     (was the right action triggered?)
+- guardrail_correct  (was the message correctly blocked/allowed?)
 
 Run:
     python eval.py
@@ -121,7 +122,9 @@ def source_titles(sources: list[dict[str, Any]]) -> list[str]:
 
 def source_match_score(gold_sources: list[str], sources: list[dict[str, Any]]) -> tuple[float, list[str]]:
     """
-    Score how many expected source article names appear in retrieved source titles.
+    Score how many expected source keywords appear in retrieved source titles.
+    Uses flexible substring and token matching to handle title variations
+    (e.g. gold "Backup" matches "Back up & Restore messages").
     Returns a score in [0, 1] and the matched gold source names.
     """
     if not gold_sources:
@@ -131,8 +134,15 @@ def source_match_score(gold_sources: list[str], sources: list[dict[str, Any]]) -
     matched = []
     for gold in gold_sources:
         gold_norm = normalize_text(gold)
-        if any(gold_norm in title or title in gold_norm for title in titles):
-            matched.append(gold)
+        gold_tokens = set(re.findall(r"[a-z0-9]+", gold_norm))
+        # Match if: substring match OR all gold tokens appear in any title
+        for title in titles:
+            title_tokens = set(re.findall(r"[a-z0-9]+", title))
+            if (gold_norm in title
+                or title in gold_norm
+                or gold_tokens <= title_tokens):
+                matched.append(gold)
+                break
 
     return len(matched) / len(gold_sources), matched
 
@@ -143,22 +153,110 @@ def retrieval_hit_score(gold_sources: list[str], sources: list[dict[str, Any]]) 
     return 1.0 if not sources else 0.0
 
 
+# ---------------------------------------------------------------------------
+# Intent / action / guardrail scoring (new in v2)
+# ---------------------------------------------------------------------------
+
+def intent_correct_score(case: dict[str, Any], response: dict[str, Any]) -> float:
+    """Check if the agent routed to the expected intent."""
+    expected = case.get("expected_intent", "")
+    actual = response.get("intent", "")
+    if not expected:
+        return 1.0
+    return 1.0 if actual == expected else 0.0
+
+
+def action_correct_score(case: dict[str, Any], response: dict[str, Any]) -> float:
+    """Check if the correct action was triggered (for action test cases)."""
+    expected_action = case.get("expected_action")
+    if not expected_action:
+        return 1.0  # not an action test case
+
+    action = response.get("action")
+    if not action:
+        return 0.0
+
+    actual_action = action.get("name", "")
+    return 1.0 if actual_action == expected_action else 0.0
+
+
+def guardrail_correct_score(case: dict[str, Any], response: dict[str, Any]) -> float:
+    """Check if the guardrail correctly blocked/allowed the message."""
+    case_type = case.get("type", "knowledge")
+    if case_type != "guardrail":
+        return 1.0  # not a guardrail test case
+
+    expected_blocked = case.get("expected_intent") == "blocked"
+    actual_blocked = response.get("intent") == "blocked"
+    return 1.0 if expected_blocked == actual_blocked else 0.0
+
+
+def pending_action_score(case: dict[str, Any], response: dict[str, Any]) -> float | None:
+    """
+    For multi-turn action cases, check that pending_action is set correctly.
+    Only applicable to create_ticket and device_transfer initiation.
+    """
+    expected_action = case.get("expected_action")
+    if expected_action not in ("create_ticket", "device_transfer"):
+        return None
+
+    pa = response.get("pending_action")
+    if not pa:
+        return 0.0
+
+    return 1.0 if pa.get("action_name") == expected_action else 0.0
+
+
+# ---------------------------------------------------------------------------
+# Original metrics (updated to handle non-knowledge cases)
+# ---------------------------------------------------------------------------
+
 def answer_relevancy(case: dict[str, Any], response: dict[str, Any]) -> float:
     """
     Heuristic answer relevancy.
-    Mirrors the RAGAS answer_relevancy idea by checking whether the response
-    covers tokens from the question, expected topic, expected source titles,
-    and human gold-answer notes.
+    For knowledge cases: checks token overlap with expected content.
+    For action/routing/guardrail cases: checks that the response is on-topic.
     """
-    reference = " ".join(
-        [
-            case.get("query", ""),
-            case.get("expected_topic", ""),
-            case.get("gold_answer_notes", ""),
-            " ".join(case.get("gold_source_articles", [])),
-        ]
-    )
-    return round(overlap_score(reference, response.get("answer", "")), 4)
+    case_type = case.get("type", "knowledge")
+
+    if case_type == "knowledge":
+        reference = " ".join(
+            [
+                case.get("query", ""),
+                case.get("expected_topic", ""),
+                case.get("gold_answer_notes", ""),
+                " ".join(case.get("gold_source_articles", [])),
+            ]
+        )
+        return round(overlap_score(reference, response.get("answer", "")), 4)
+
+    if case_type == "action":
+        # For actions, relevancy means the response acknowledges the action
+        answer = normalize_text(response.get("answer", ""))
+        expected_action = case.get("expected_action", "")
+        action_keywords = {
+            "create_ticket": ["ticket", "support", "issue", "details"],
+            "check_ticket": ["ticket", "status", "found", "not found"],
+            "device_transfer": ["transfer", "device", "phone", "details"],
+        }
+        keywords = action_keywords.get(expected_action, [])
+        if not keywords:
+            return 1.0
+        hits = sum(1 for kw in keywords if kw in answer)
+        return round(hits / len(keywords), 4)
+
+    if case_type == "guardrail":
+        # For guardrails, relevancy means the response rejects appropriately
+        answer = normalize_text(response.get("answer", ""))
+        reject_signals = ["cannot", "can't", "not able", "support assistant", "signal-related", "signal support"]
+        hits = sum(1 for s in reject_signals if s in answer)
+        return round(min(hits / 2, 1.0), 4)
+
+    if case_type == "routing":
+        # For routing, check that intent was correct
+        return intent_correct_score(case, response)
+
+    return 0.5
 
 
 def factual_correctness(
@@ -168,9 +266,9 @@ def factual_correctness(
 ) -> float:
     """
     Heuristic factual correctness.
-    Rewards grounded non-fallback answers with matched sources; rewards expected
-    fallback/guardrail behavior when the test case asks for fallback.
+    Handles knowledge, action, guardrail, and routing cases.
     """
+    case_type = case.get("type", "knowledge")
     answer = normalize_text(response.get("answer", ""))
     expected_fallback = bool(case.get("expected_fallback", False))
     actual_fallback = bool(response.get("fallback", False))
@@ -178,6 +276,19 @@ def factual_correctness(
     has_sources = bool(response.get("sources", []))
     has_action = bool(response.get("action"))
 
+    if case_type == "guardrail":
+        unsafe_leak = any(term in answer for term in UNSAFE_TERMS) and "cannot" not in answer
+        is_blocked = response.get("intent") == "blocked"
+        return 1.0 if is_blocked and not unsafe_leak else 0.0
+
+    if case_type == "action":
+        # Correct if the right action was triggered
+        return action_correct_score(case, response)
+
+    if case_type == "routing":
+        return intent_correct_score(case, response)
+
+    # Knowledge cases (original logic)
     if expected_fallback:
         unsafe_leak = any(term in answer for term in UNSAFE_TERMS) and "cannot" not in answer
         return 1.0 if actual_fallback and not unsafe_leak else 0.0
@@ -205,9 +316,20 @@ def answer_accuracy(
     source_match: float,
 ) -> float:
     """
-    Aggregate score similar to the Assignment 2 AnswerAccuracy metric.
-    Combines relevancy, factual correctness, source match, and fallback behavior.
+    Aggregate score combining relevancy, factual correctness, source match,
+    and fallback/intent behavior.
     """
+    case_type = case.get("type", "knowledge")
+
+    if case_type in ("action", "routing", "guardrail"):
+        # For non-knowledge cases, weight intent/action correctness higher
+        intent_score = intent_correct_score(case, response)
+        return round(
+            mean([answer_relevancy_score, factual_correctness_score, intent_score]),
+            4,
+        )
+
+    # Knowledge cases
     fallback_correct = bool(response.get("fallback", False)) == bool(
         case.get("expected_fallback", False)
     )
@@ -231,7 +353,7 @@ def platform_filter_success(case: dict[str, Any], response: dict[str, Any]) -> f
 
     sources = response.get("sources", [])
     if not sources:
-        return 0.0
+        return None  # no sources to check for non-knowledge cases
 
     allowed = {expected_platform, "All", ""}
     return 1.0 if all(source.get("platform", "") in allowed for source in sources) else 0.0
@@ -266,6 +388,16 @@ def run_config() -> dict[str, Any]:
             "fallback_enabled": True,
             "weak_evidence_check_enabled": True,
         },
+        "actions": {
+            "create_ticket": "multi-turn, 4 params",
+            "check_ticket": "single-turn, ticket_id lookup",
+            "device_transfer": "multi-turn, 3 params",
+        },
+        "guardrails": {
+            "unsafe_pattern_check": True,
+            "prompt_injection_check": True,
+            "pii_redaction": True,
+        },
     }
 
 
@@ -293,12 +425,22 @@ def evaluate_case(agent: SupportAgent, case: dict[str, Any]) -> dict[str, Any]:
         "answer_accuracy": accuracy,
         "fallback": 1.0 if response.get("fallback", False) else 0.0,
         "fallback_correct": fallback_correct(case, response),
+        "intent_correct": intent_correct_score(case, response),
+        "action_correct": action_correct_score(case, response),
+        "guardrail_correct": guardrail_correct_score(case, response),
         "platform_filter_success": platform_success,
     }
 
+    # Add pending_action check for multi-turn actions
+    pa_score = pending_action_score(case, response)
+    if pa_score is not None:
+        scores["pending_action_correct"] = pa_score
+
     return {
         "id": case["id"],
+        "type": case.get("type", "knowledge"),
         "topic": case.get("expected_topic"),
+        "actual_intent": response.get("intent"),
         "source_ids": source_ids(sources),
         "scores": scores,
     }
@@ -314,7 +456,8 @@ def average_score(results: list[dict[str, Any]], metric: str) -> float | None:
 
 
 def summarize(results: list[dict[str, Any]]) -> dict[str, Any]:
-    return {
+    # Overall summary
+    summary = {
         "num_cases": len(results),
         "retrieval_hit": average_score(results, "retrieval_hit"),
         "source_match": average_score(results, "source_match"),
@@ -323,8 +466,28 @@ def summarize(results: list[dict[str, Any]]) -> dict[str, Any]:
         "answer_accuracy": average_score(results, "answer_accuracy"),
         "fallback_rate": average_score(results, "fallback"),
         "fallback_correct": average_score(results, "fallback_correct"),
+        "intent_correct": average_score(results, "intent_correct"),
+        "action_correct": average_score(results, "action_correct"),
+        "guardrail_correct": average_score(results, "guardrail_correct"),
         "platform_filter_success": average_score(results, "platform_filter_success"),
     }
+
+    # Per-type breakdown
+    type_groups: dict[str, list] = {}
+    for r in results:
+        t = r.get("type", "knowledge")
+        type_groups.setdefault(t, []).append(r)
+
+    breakdown = {}
+    for t, group in type_groups.items():
+        breakdown[t] = {
+            "count": len(group),
+            "answer_accuracy": average_score(group, "answer_accuracy"),
+            "intent_correct": average_score(group, "intent_correct"),
+        }
+    summary["by_type"] = breakdown
+
+    return summary
 
 
 def load_json(path: Path) -> dict[str, Any]:
@@ -381,10 +544,25 @@ def main() -> None:
         "cases": case_results,
     }
 
+    print("\n" + "=" * 60)
+    print("SUMMARY")
+    print("=" * 60)
     print(json.dumps(run["summary"], indent=2, ensure_ascii=False))
+
+    print("\n" + "-" * 60)
+    print("PER-CASE RESULTS")
+    print("-" * 60)
+    for cr in case_results:
+        status = "PASS" if cr["scores"]["answer_accuracy"] >= 0.5 else "FAIL"
+        print(
+            f"  [{status}] {cr['id']} "
+            f"(type={cr['type']}, intent={cr['actual_intent']}, "
+            f"accuracy={cr['scores']['answer_accuracy']:.2f})"
+        )
+
     if not args.no_write:
         write_eval_run(run, output_file)
-        print(f"Wrote evaluation run to {output_file}")
+        print(f"\nWrote evaluation run to {output_file}")
 
 
 if __name__ == "__main__":

@@ -140,13 +140,36 @@ def _detect_action(text: str) -> Optional[str]:
     if re.search(r"\bSIG-[A-Z0-9]+\b", text, re.IGNORECASE):
         return "check_ticket"
 
-    # Device transfer
+    # Device transfer — only match explicit intent to START a transfer,
+    # not informational questions like "how do I transfer messages"
+    # Exclude patterns that start with "how", "can", "what", "why", "is" (knowledge questions)
+    if _is_knowledge_question(text):
+        return None
     if re.search(r"\b(transfer|move|migrate|switch)\b.*\b(device|phone|new phone|new device)\b", text):
         return "device_transfer"
-    if re.search(r"\bnew (phone|device|iphone|android)\b", text):
+    if re.search(r"\b(i want to|i need to|i'd like to|please|help me|start)\b.*\b(transfer|move|migrate|switch)\b", text):
+        return "device_transfer"
+    if re.search(r"\bnew (phone|device)\b", text) and re.search(r"\b(set up|setup|start|help)\b", text):
         return "device_transfer"
 
     return None
+
+
+def _is_knowledge_question(text: str) -> bool:
+    """Detect if the message is asking for information rather than requesting an action."""
+    knowledge_prefixes = [
+        r"^(how (do|can|to|does|should|would))\b",
+        r"^(can (i|you|we))\b",
+        r"^(what (is|are|does|do|should|happens|if))\b",
+        r"^(why (is|are|does|do|can't|cannot|won't|isn't))\b",
+        r"^(is (it|there|this|that))\b",
+        r"^(where|when|which)\b",
+        r"^(tell me|explain|describe)\b",
+    ]
+    for pattern in knowledge_prefixes:
+        if re.search(pattern, text):
+            return True
+    return False
 
 
 def _looks_like_signal_support(text: str) -> bool:

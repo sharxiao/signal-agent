@@ -71,12 +71,6 @@ st.caption(
 
 agent = load_agent()
 
-platform = st.sidebar.selectbox(
-    "Platform filter",
-    options=["Auto", "All", "Android", "iOS", "Desktop"],
-    index=0,
-)
-
 if st.sidebar.button("Clear chat"):
     st.session_state.messages = []
     st.session_state.pending_action = None
@@ -114,8 +108,6 @@ if user_message:
     with st.chat_message("user"):
         st.markdown(user_message)
 
-    selected_platform = None if platform == "Auto" else platform
-
     # Rebuild pending action from session state
     pending_action = None
     if st.session_state.pending_action:
@@ -126,7 +118,6 @@ if user_message:
             response = agent.chat(
                 user_message,
                 history=build_history(),
-                platform_filter=selected_platform,
                 pending_action=pending_action,
             )
         st.markdown(response["answer"])

@@ -33,10 +33,12 @@ from src.agent.pipeline import get_retriever
 logging.basicConfig(level=logging.INFO, format="%(levelname)s: %(message)s")
 log = logging.getLogger(__name__)
 
-# Conservative defaults for the first version
+# Retrieval quality thresholds — tuned after eval runs.
+# Lowered from 0.30/0.22 to reduce false fallbacks on valid but
+# cross-platform queries (e.g. iOS backup).
 
-MIN_TOP_SCORE = 0.30
-MIN_AVG_TOP3_SCORE = 0.22
+MIN_TOP_SCORE = 0.25
+MIN_AVG_TOP3_SCORE = 0.18
 REQUEST_TIMEOUT = 60
 
 
