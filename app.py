@@ -30,6 +30,41 @@ st.set_page_config(
     initial_sidebar_state="expanded",
 )
 
+# ---------------------------------------------------------------------------
+# Password protection (for deployed version)
+# ---------------------------------------------------------------------------
+
+def check_password() -> bool:
+    """Returns True if the user has entered the correct password."""
+    # Skip auth if no password is configured (local development)
+    try:
+        app_password = st.secrets.get("APP_PASSWORD", "")
+    except Exception:
+        return True  # No secrets file — running locally, skip auth
+
+    if not app_password:
+        return True  # No password set, skip auth
+
+    if "authenticated" not in st.session_state:
+        st.session_state.authenticated = False
+
+    if st.session_state.authenticated:
+        return True
+
+    st.markdown("### 🔒 Signal Support Agent")
+    st.caption("Enter the password to access the agent.")
+    pwd = st.text_input("Password", type="password", key="password_input")
+    if pwd == app_password:
+        st.session_state.authenticated = True
+        st.rerun()
+    elif pwd:
+        st.error("Incorrect password. Please try again.")
+    return False
+
+
+if not check_password():
+    st.stop()
+
 # Signal brand colors
 SIGNAL_BLUE = "#3A76F0"
 SIGNAL_BLUE_LIGHT = "#EBF1FE"
