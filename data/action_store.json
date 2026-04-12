@@ -59,6 +59,26 @@
       "status": "open",
       "created_at": "2026-04-12T10:03:32.384838+00:00",
       "updated_at": "2026-04-12T10:03:32.384838+00:00"
+    },
+    "SIG-D2D2E480": {
+      "ticket_id": "SIG-D2D2E480",
+      "issue_type": "security",
+      "device_os": "iOS",
+      "email": "demo@example.com",
+      "description": "my phone was stolen",
+      "status": "open",
+      "created_at": "2026-04-12T17:32:59.162255+00:00",
+      "updated_at": "2026-04-12T17:32:59.162255+00:00"
+    },
+    "SIG-96347C46": {
+      "ticket_id": "SIG-96347C46",
+      "issue_type": "security",
+      "device_os": "iOS",
+      "email": "demo@example.com",
+      "description": "my phone was stolen",
+      "status": "open",
+      "created_at": "2026-04-12T17:48:54.970095+00:00",
+      "updated_at": "2026-04-12T17:48:54.970095+00:00"
     }
   },
   "transfers": {
@@ -69,6 +89,30 @@
       "transfer_type": "both",
       "status": "pending",
       "created_at": "2026-04-12T01:51:24.850488+00:00"
+    },
+    "TRF-68461705": {
+      "transfer_id": "TRF-68461705",
+      "source_device": "iPhone",
+      "target_device": "Android",
+      "transfer_type": "both",
+      "status": "pending",
+      "created_at": "2026-04-12T17:23:23.628506+00:00"
+    },
+    "TRF-1B899E87": {
+      "transfer_id": "TRF-1B899E87",
+      "source_device": "Android",
+      "target_device": "iPhone",
+      "transfer_type": "both",
+      "status": "pending",
+      "created_at": "2026-04-12T17:35:18.457055+00:00"
+    },
+    "TRF-AA8DF79E": {
+      "transfer_id": "TRF-AA8DF79E",
+      "source_device": "Andriod",
+      "target_device": "iPhone",
+      "transfer_type": "both",
+      "status": "pending",
+      "created_at": "2026-04-12T17:50:46.219111+00:00"
     }
   }
 }
