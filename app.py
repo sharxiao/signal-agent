@@ -28,7 +28,7 @@ st.set_page_config(
 )
 
 from src.agent.actions import PendingAction, _load_store, TICKET_PARAMS, TRANSFER_PARAMS
-from src.agent.conversation import SupportAgent
+
 
 # ---------------------------------------------------------------------------
 # Password protection (for deployed version)
@@ -200,7 +200,8 @@ st.markdown(
 # ---------------------------------------------------------------------------
 
 @st.cache_resource(show_spinner="Loading Signal support agent...")
-def load_agent() -> SupportAgent:
+def load_agent():
+    from src.agent.conversation import SupportAgent
     return SupportAgent()
 
 
