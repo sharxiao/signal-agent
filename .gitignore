@@ -16,7 +16,7 @@ venv/
  
 # virtual environment
 venv311
-venv
 
-# student id - create this file locally in the root folder
+# local-only course / app secrets
 ID.txt
+.streamlit/secrets.toml

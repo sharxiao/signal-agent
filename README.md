@@ -91,6 +91,8 @@ User Message
 
 ```
 signal-support-agent/
+├── .streamlit/
+│   └── secrets.toml.example   # Template for local / Streamlit Cloud secrets
 ├── src/agent/
 │   ├── config.py          # Paths, model names, chunking params
 │   ├── ingest.py          # Fetch articles from Zendesk API
@@ -128,6 +130,16 @@ signal-support-agent/
 ### Steps
 
 ```bash
+## Setup & Installation
+
+### Prerequisites
+
+- Python 3.10+
+- Course API access
+
+### Steps
+
+```bash
 # 1. Clone the repository
 git clone <repo-url>
 cd Signal_Agent
@@ -138,10 +150,14 @@ pip install -r requirements.txt
 # 3. Create ID.txt with your student ID
 echo "YOUR_STUDENT_ID" > ID.txt
 
-# 4. Run the ingestion pipeline (fetches articles, chunks, embeds)
+# 4. Create a local Streamlit secrets file
+mkdir -p .streamlit
+cp .streamlit/secrets.toml.example .streamlit/secrets.toml
+
+# 5. Run the ingestion pipeline (fetches articles, chunks, embeds)
 python -m src.agent.pipeline
 
-# 5. Launch the Streamlit app
+# 6. Launch the Streamlit app
 streamlit run app.py
 ```
 

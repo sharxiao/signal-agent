@@ -16,9 +16,6 @@ from pathlib import Path
 
 import streamlit as st
 
-from src.agent.actions import PendingAction, _load_store, TICKET_PARAMS, TRANSFER_PARAMS
-from src.agent.conversation import SupportAgent
-
 # ---------------------------------------------------------------------------
 # Page config & theme
 # ---------------------------------------------------------------------------
@@ -29,6 +26,9 @@ st.set_page_config(
     layout="centered",
     initial_sidebar_state="expanded",
 )
+
+from src.agent.actions import PendingAction, _load_store, TICKET_PARAMS, TRANSFER_PARAMS
+from src.agent.conversation import SupportAgent
 
 # ---------------------------------------------------------------------------
 # Password protection (for deployed version)
