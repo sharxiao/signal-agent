@@ -1,7 +1,5 @@
 # generated data — you can regenerate by running pipeline
-data/chromadb/
 data/raw/
-data/chunks/
  
 # Python
 __pycache__/
