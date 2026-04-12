@@ -112,6 +112,22 @@ def _build_messages(query: str, context: str, conversation_history: str = "") ->
         "Keep the answer concise, practical, and support-oriented.\n"
         "If conversation history is provided, use it to understand context "
         "and resolve references like 'it', 'that', 'the same thing', etc.\n"
+        "\n"
+        "IMPORTANT rules:\n"
+        "- If the user asks MULTIPLE questions in one message, address ALL of them.\n"
+        "- If the retrieved documentation does not contain a clear answer for a "
+        "sub-question, explicitly say you don't have that information rather than guessing.\n"
+        "- If you are not confident in your answer, set grounded to false and "
+        "fallback to true.\n"
+        "- NEVER fabricate URLs, steps, or feature names not present in the sources.\n"
+        "- If the user's question is VAGUE or UNCLEAR (e.g. 'it's not working', "
+        "'I have a problem'), ask a clarifying follow-up question to understand "
+        "what specific Signal feature or issue they need help with. Include the "
+        "follow-up question in your answer.\n"
+        "- If the retrieved sources don't seem relevant to the question, say so "
+        "and ask the user to rephrase rather than forcing an answer from "
+        "unrelated content.\n"
+        "\n"
         "Return JSON only with the following schema:\n"
         "{\n"
         '  "answer": string,\n'
@@ -147,7 +163,11 @@ def _build_messages(query: str, context: str, conversation_history: str = "") ->
 def _extract_json(text: str) -> dict[str, Any]:
     """
     Best-effort JSON extraction.
-    Handles models that may wrap JSON in markdown fences or extra text.
+    Handles models that may:
+    - Wrap JSON in markdown fences
+    - Output text before/after the JSON
+    - Output label:value format instead of JSON (e.g. "Answer: ...\nGrounded: true")
+    - Include thinking/reasoning before the actual JSON
     """
     if text is None:
         return {
@@ -172,19 +192,72 @@ def _extract_json(text: str) -> dict[str, Any]:
     except json.JSONDecodeError:
         pass
 
-    # Try to locate first JSON object in the text
-    match = re.search(r"\{.*\}", text, flags=re.DOTALL)
-    if match:
+    # Try to locate the LAST JSON object in the text
+    # (models often think/reason first, then output JSON at the end)
+    json_candidates = list(re.finditer(r"\{[^{}]*(?:\{[^{}]*\}[^{}]*)*\}", text, flags=re.DOTALL))
+    for match in reversed(json_candidates):
+        try:
+            parsed = json.loads(match.group(0))
+            if isinstance(parsed, dict) and "answer" in parsed:
+                return parsed
+        except json.JSONDecodeError:
+            continue
+
+    # Try any JSON object (less strict)
+    for match in reversed(json_candidates):
         try:
             parsed = json.loads(match.group(0))
             if isinstance(parsed, dict):
                 return parsed
         except json.JSONDecodeError:
-            pass
+            continue
 
-    # Hard fallback
+    # Fallback: try to parse label:value format
+    # e.g. "Answer: some text\nGrounded: true\nFallback: false\nCitations: [S1]"
+    label_match = re.search(
+        r"(?:^|\n)\s*[Aa]nswer\s*:\s*(.+?)(?=\n\s*[Gg]rounded\s*:|\n\s*[Ff]allback\s*:|\Z)",
+        text,
+        flags=re.DOTALL,
+    )
+    if label_match:
+        answer_text = label_match.group(1).strip()
+        grounded = bool(re.search(r"[Gg]rounded\s*:\s*true", text))
+        fallback = bool(re.search(r"[Ff]allback\s*:\s*true", text))
+        citations_match = re.search(r"[Cc]itations?\s*:\s*\[([^\]]*)\]", text)
+        citations = []
+        if citations_match:
+            citations = [c.strip().strip('"\'') for c in citations_match.group(1).split(",") if c.strip()]
+        reason_match = re.search(r"[Rr]eason[_ ]?if[_ ]?fallback\s*:\s*(.+?)(?:\n|$)", text)
+        reason = reason_match.group(1).strip() if reason_match else ""
+
+        return {
+            "answer": answer_text,
+            "grounded": grounded,
+            "fallback": fallback,
+            "citations": citations,
+            "reason_if_fallback": reason,
+        }
+
+    # Hard fallback — strip any JSON-like metadata from the text
+    # Remove lines that look like metadata fields
+    cleaned_lines = []
+    for line in text.split("\n"):
+        line_stripped = line.strip().lower()
+        if any(line_stripped.startswith(prefix) for prefix in [
+            "grounded:", "fallback:", "citations:", "reason_if_fallback:",
+            "reason if fallback:", "**grounded", "**fallback", "**citations",
+            "**reason",
+        ]):
+            continue
+        # Also skip lines that are just "Answer:" headers
+        if re.match(r"^\*?\*?answer\*?\*?\s*:?\s*$", line_stripped):
+            continue
+        cleaned_lines.append(line)
+
+    cleaned = "\n".join(cleaned_lines).strip()
+
     return {
-        "answer": text,
+        "answer": cleaned if cleaned else text,
         "grounded": False,
         "fallback": True,
         "citations": [],
@@ -270,6 +343,78 @@ def _evidence_is_weak(results: list[dict]) -> bool:
     avg_top3 = sum(r.get("score", 0.0) for r in top3) / len(top3)
 
     return top_score < MIN_TOP_SCORE or avg_top3 < MIN_AVG_TOP3_SCORE
+
+
+def _check_output_quality(
+    answer: str,
+    citations: list[str],
+    results: list[dict],
+    grounded: bool,
+) -> str:
+    """
+    Post-generation guardrail. Returns a non-empty reason string if the
+    answer should be blocked, empty string if it's OK.
+
+    Checks for:
+    1. Answer claims to be grounded but has no citations
+    2. Answer contains signs of hallucination (fabricated URLs, steps not in sources)
+    3. Answer leaks system prompt or internal instructions
+    4. All cited sources have very low retrieval scores
+    5. Duplicate sources — all cited sources are identical content
+    6. Answer content not supported by source content
+    """
+    answer_lower = answer.lower()
+
+    # Check 1: Claims grounded but no citations
+    if grounded and not citations:
+        return "Claims grounded but provides no source citations."
+
+    # Check 2: Hallucination signals
+    hallucination_signals = [
+        r"https?://(?!support\.signal\.org)\S+",  # URLs not from Signal help
+    ]
+    for pattern in hallucination_signals:
+        if re.search(pattern, answer_lower):
+            chunk_texts = " ".join(r.get("text", "") for r in results).lower()
+            match = re.search(pattern, answer_lower)
+            if match and match.group(0) not in chunk_texts:
+                return "Possible hallucination: content not found in retrieved sources."
+
+    # Check 3: System prompt leakage
+    leak_patterns = [
+        r"system\s*prompt",
+        r"my\s+instructions\s+(are|say)",
+        r"i\s+was\s+(told|instructed|programmed)\s+to",
+        r"as\s+an?\s+ai\s+(language\s+)?model",
+    ]
+    for pattern in leak_patterns:
+        if re.search(pattern, answer_lower):
+            return "Possible system prompt leakage in response."
+
+    # Check 4: All cited sources have very low scores
+    if citations and results:
+        cited_scores = []
+        for i, r in enumerate(results, start=1):
+            if f"S{i}" in citations:
+                cited_scores.append(r.get("score", 0.0))
+        if cited_scores and max(cited_scores) < 0.20:
+            return "All cited sources have very low relevance scores."
+
+    # Check 5: All sources are duplicates (same article title)
+    if len(results) >= 2:
+        titles = [r.get("article_title", "").strip().lower() for r in results if r.get("article_title")]
+        if titles and len(set(titles)) == 1:
+            # All sources from the same article — check if answer content
+            # has reasonable overlap with the source content
+            source_text = " ".join(r.get("text", "") for r in results).lower()
+            answer_words = set(re.findall(r"[a-z]{4,}", answer_lower))
+            source_words = set(re.findall(r"[a-z]{4,}", source_text))
+            if answer_words and source_words:
+                overlap = len(answer_words & source_words) / len(answer_words)
+                if overlap < 0.15:
+                    return "Answer content has very low overlap with source documents."
+
+    return ""  # OK
 
 
 def answer_knowledge_query(
@@ -378,6 +523,20 @@ def answer_knowledge_query(
     # Keep only valid source IDs that actually exist
     valid_ids = {f"S{i}" for i in range(1, len(results) + 1)}
     citations = [c for c in citations if c in valid_ids]
+
+    # --- OUTPUT GUARDRAIL: check for hallucination / low-quality answers ---
+    guardrail_issue = _check_output_quality(answer, citations, results, grounded)
+    if guardrail_issue:
+        log.warning(f"Output guardrail triggered: {guardrail_issue}")
+        answer = (
+            "I found some related Signal help content, but I'm not confident "
+            "enough in the answer to share it. Could you rephrase your question "
+            "or provide more details so I can help you better?"
+        )
+        grounded = False
+        fallback = True
+        reason_if_fallback = f"Output guardrail: {guardrail_issue}"
+        citations = []
 
     # Build citation-ready source objects aligned with S1, S2, ...
     sources = []

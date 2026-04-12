@@ -214,6 +214,47 @@ def render_sources(sources: list[dict]) -> None:
                 st.caption(", ".join(details))
 
 
+def render_confidence_badge(metadata: dict) -> None:
+    """Show a confidence level badge based on grounded flag and retrieval quality."""
+    if not metadata:
+        return
+
+    intent = metadata.get("intent", "")
+    # Don't show confidence for non-knowledge intents
+    if intent in ("greeting", "action", "blocked", "ambiguous", "off_topic"):
+        return
+
+    grounded = metadata.get("grounded", False)
+    fallback = metadata.get("fallback", False)
+    sources = metadata.get("sources", [])
+
+    if fallback:
+        level, color, bg = "Low", "#856404", "#FFF3CD"
+    elif grounded and len(sources) >= 2:
+        level, color, bg = "High", "#0F6E56", "#E1F5EE"
+    elif grounded:
+        level, color, bg = "Medium", "#1B4AB5", "#EBF1FE"
+    else:
+        level, color, bg = "Medium", "#1B4AB5", "#EBF1FE"
+
+    retrieval_method = ""
+    if sources:
+        methods = set()
+        for s in sources:
+            m = s.get("retrieval_method", "")
+            if m:
+                methods.add(m)
+        if methods:
+            retrieval_method = f" · {', '.join(methods)}"
+
+    st.markdown(
+        f'<span style="display:inline-block;padding:2px 10px;border-radius:10px;'
+        f'font-size:0.7rem;font-weight:500;background:{bg};color:{color};'
+        f'margin-top:4px;">Confidence: {level}{retrieval_method}</span>',
+        unsafe_allow_html=True,
+    )
+
+
 def render_progress_bar(pending_action_data: dict) -> None:
     """Show a visual progress indicator for multi-turn actions."""
     if not pending_action_data:
@@ -348,7 +389,7 @@ agent = load_agent()
 # --- Sidebar ---
 st.sidebar.title("📋 Actions & History")
 
-if st.sidebar.button("🗑️ Clear Chat", use_container_width=True):
+if st.sidebar.button("➕ New Chat", use_container_width=True):
     st.session_state.messages = []
     st.session_state.pending_action = None
     st.rerun()
@@ -431,6 +472,7 @@ for message in st.session_state.messages:
     with st.chat_message(message["role"]):
         st.markdown(message["content"])
         if message["role"] == "assistant":
+            render_confidence_badge(message.get("metadata", {}))
             render_sources(message.get("sources", []))
 
 # --- Handle new user input ---
@@ -454,6 +496,7 @@ if user_message:
                 pending_action=pending_action,
             )
         st.markdown(response["answer"])
+        render_confidence_badge(response)
         render_sources(response.get("sources", []))
 
     # Update pending action in session state

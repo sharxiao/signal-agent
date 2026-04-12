@@ -163,11 +163,24 @@ def intent_correct_score(case: dict[str, Any], response: dict[str, Any]) -> floa
     actual = response.get("intent", "")
     if not expected:
         return 1.0
+
+    # Some cases accept multiple intents as correct
+    acceptable = case.get("acceptable_intents", [])
+    if acceptable:
+        return 1.0 if actual in acceptable else 0.0
+
     return 1.0 if actual == expected else 0.0
 
 
 def action_correct_score(case: dict[str, Any], response: dict[str, Any]) -> float:
     """Check if the correct action was triggered (for action test cases)."""
+    # Check negative constraint: action that should NOT be triggered
+    not_expected = case.get("not_expected_action")
+    if not_expected:
+        action = response.get("action")
+        actual_action = action.get("name", "") if action else ""
+        return 0.0 if actual_action == not_expected else 1.0
+
     expected_action = case.get("expected_action")
     if not expected_action:
         return 1.0  # not an action test case

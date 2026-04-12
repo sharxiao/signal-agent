@@ -23,7 +23,11 @@ from src.agent.actions import (
     run_single_action,
     start_pending_action,
 )
-from src.agent.guardrails import GuardrailDecision, check_user_message, redact_sensitive_text
+from src.agent.guardrails import (
+    GuardrailDecision,
+    check_user_message,
+    redact_sensitive_text,
+)
 from src.agent.qa import answer_knowledge_query
 from src.agent.router import RouteDecision, detect_platform, route_message
 
@@ -102,8 +106,15 @@ def _extract_ticket_id(text: str) -> Optional[str]:
 _CANCEL_PHRASES = {
     "cancel", "stop", "never mind", "nevermind", "forget it",
     "quit", "exit", "abort", "back", "go back", "start over",
-    "no thanks", "no thank you",
+    "no thanks", "no thank you", "not anymore", "no longer",
 }
+
+_CANCEL_PATTERNS = [
+    r"\b(don'?t|do not)\s+(want|need|wish)\s+(to|a|the)\b",
+    r"\bnot\s+interested\b",
+    r"\b(cancel|stop|end)\s+(this|the|my)\b",
+    r"\bi\s+changed\s+my\s+mind\b",
+]
 
 
 def _wants_to_cancel(message: str, pending: PendingAction) -> bool:
@@ -111,30 +122,67 @@ def _wants_to_cancel(message: str, pending: PendingAction) -> bool:
     Detect if the user wants to abandon the in-progress action.
 
     Returns True if:
-    - The message matches a cancel phrase, OR
+    - The message matches a cancel phrase or negation pattern
     - The message looks like a completely different topic / question
-      (contains a question mark or is long enough to be a new query
-       and doesn't look like a valid parameter value)
+    - The message content doesn't match the expected parameter at all
     """
     text = re.sub(r"\s+", " ", (message or "").strip().lower())
 
-    # Explicit cancel
+    # Explicit cancel phrase
     if text in _CANCEL_PHRASES:
         return True
     for phrase in _CANCEL_PHRASES:
         if text.startswith(phrase):
             return True
 
+    # Negation patterns (e.g. "i don't want to create a ticket")
+    for pattern in _CANCEL_PATTERNS:
+        if re.search(pattern, text):
+            return True
+
     # Looks like a new question (has a question mark and is long enough)
     if "?" in text and len(text.split()) > 4:
         return True
 
-    # Looks like a full sentence unrelated to the expected parameter
+    # Content-mismatch: message looks like a new topic, not a param value
     current_param = pending.next_missing
     if current_param:
         param_name = current_param["name"]
-        # If we're expecting a short param (device_os, transfer_type, email)
-        # but the user typed a long sentence, they're probably switching topics
+
+        # If expecting email but input is clearly not an email
+        if param_name == "email":
+            has_at = "@" in text
+            looks_like_sentence = len(text.split()) > 3
+            if not has_at and looks_like_sentence:
+                return True
+
+        # If expecting device_os but input is a full sentence
+        if param_name == "device_os":
+            valid_os = {"android", "ios", "desktop", "iphone", "ipad"}
+            words = set(text.split())
+            if not (words & valid_os) and len(text.split()) > 3:
+                return True
+
+        # If expecting transfer_type but input is a full sentence
+        if param_name == "transfer_type":
+            valid_types = {"messages", "account", "both"}
+            words = set(text.split())
+            if not (words & valid_types) and len(text.split()) > 3:
+                return True
+
+        # If expecting issue_type but input looks like a completely different request
+        if param_name == "issue_type":
+            # Issue type is flexible, but if the input is a full sentence
+            # that looks like a support question, it's probably a topic switch
+            if len(text.split()) > 6 and any(
+                phrase in text for phrase in [
+                    "how do", "how to", "can i", "why is", "what is",
+                    "help me", "i need", "my account", "not working",
+                ]
+            ):
+                return True
+
+        # Generic: if expecting a short param but got a long sentence
         if param_name in ("device_os", "transfer_type", "email"):
             if len(text.split()) > 8:
                 return True
@@ -295,14 +343,21 @@ class SupportAgent:
         if route.intent == "action" and route.action_name:
             # Multi-turn actions: create_ticket, device_transfer
             if route.action_name in ("create_ticket", "device_transfer"):
-                pending_action_new, action_result = start_pending_action(route.action_name)
-                intro = {
-                    "create_ticket": "I'll help you create a support ticket. I need a few details.\n\n",
-                    "device_transfer": "I'll help you set up a device transfer request. I need a few details.\n\n",
-                }
+                pending_action_new, action_result = start_pending_action(
+                    route.action_name, initial_message=safe_message
+                )
+
+                # Adjust intro based on whether action completed or has pre-filled params
+                if action_result.completed:
+                    intro_text = ""
+                elif pending_action_new.collected:
+                    intro_text = "I'll help you create a support ticket.\n\n" if route.action_name == "create_ticket" else "I'll help you set up a device transfer.\n\n"
+                else:
+                    intro_text = "I'll help you create a support ticket. I need a few details.\n\n" if route.action_name == "create_ticket" else "I'll help you set up a device transfer request. I need a few details.\n\n"
+
                 result = ConversationTurn(
                     query=safe_message,
-                    answer=intro.get(route.action_name, "") + action_result.answer,
+                    answer=intro_text + action_result.answer,
                     intent="action",
                     route=route.to_dict(),
                     guardrail=guardrail.to_dict(),
@@ -311,7 +366,9 @@ class SupportAgent:
                     sources=[],
                     action=action_result.to_dict(),
                 ).to_dict()
-                result["pending_action"] = pending_action_new.to_dict()
+                result["pending_action"] = (
+                    pending_action_new.to_dict() if not action_result.completed else None
+                )
                 return result
 
             # Single-turn: check_ticket

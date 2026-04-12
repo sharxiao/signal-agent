@@ -306,10 +306,83 @@ def execute_device_transfer(params: dict[str, str]) -> ActionResult:
 # Multi-turn helpers (called by conversation.py)
 # ---------------------------------------------------------------------------
 
-def start_pending_action(action_name: str) -> tuple[PendingAction, ActionResult]:
+def _pre_extract_params(message: str, action_name: str) -> dict[str, str]:
     """
-    Begin a new multi-turn action.  Returns the PendingAction state and the
-    first prompt to show the user.
+    Try to extract parameter values from the user's initial message.
+    E.g. "I want to create a ticket because my phone was stolen. my email is user@example.com"
+    should pre-fill issue_type, email, and description.
+    """
+    extracted: dict[str, str] = {}
+    text = message.strip()
+    lower = text.lower()
+
+    if action_name == "create_ticket":
+        # Extract email
+        email_match = re.search(r"[a-zA-Z0-9._%+-]+@[a-zA-Z0-9.-]+\.[a-zA-Z]{2,}", text)
+        if email_match:
+            extracted["email"] = email_match.group(0)
+
+        # Extract device_os
+        if any(w in lower for w in ["iphone", "ipad", "ios"]):
+            extracted["device_os"] = "iOS"
+        elif "android" in lower:
+            extracted["device_os"] = "Android"
+        elif "desktop" in lower:
+            extracted["device_os"] = "Desktop"
+
+        # Extract issue_type from keywords
+        issue_keywords = {
+            "registration": "registration",
+            "verification": "verification",
+            "verify": "verification",
+            "backup": "backup",
+            "restore": "backup",
+            "transfer": "transfer",
+            "notification": "notification",
+            "stolen": "security",
+            "hacked": "security",
+            "compromised": "security",
+            "locked": "registration",
+            "pin": "registration",
+        }
+        for keyword, issue in issue_keywords.items():
+            if keyword in lower:
+                extracted["issue_type"] = issue
+                break
+
+        # Extract description — use the part after "because" or the whole message
+        because_match = re.search(r"because\s+(.+?)(?:\.|my email|$)", lower, re.IGNORECASE)
+        if because_match:
+            extracted["description"] = because_match.group(1).strip()
+
+    elif action_name == "device_transfer":
+        # Extract devices
+        if any(w in lower for w in ["iphone", "ipad", "ios"]):
+            if "from" in lower and lower.index("iphone" if "iphone" in lower else "ios") < len(lower) // 2:
+                extracted["source_device"] = "iPhone"
+            else:
+                extracted["target_device"] = "iPhone"
+        if "android" in lower:
+            if "from" in lower and lower.index("android") < len(lower) // 2:
+                extracted["source_device"] = "Android"
+            else:
+                extracted["target_device"] = "Android"
+
+        # Extract transfer type
+        if "messages" in lower and "account" in lower:
+            extracted["transfer_type"] = "both"
+        elif "messages" in lower:
+            extracted["transfer_type"] = "messages"
+        elif "account" in lower:
+            extracted["transfer_type"] = "account"
+
+    return extracted
+
+
+def start_pending_action(action_name: str, initial_message: str = "") -> tuple[PendingAction, ActionResult]:
+    """
+    Begin a new multi-turn action. Pre-extracts any parameters from the
+    initial message. Returns the PendingAction state and the next prompt.
     """
     if action_name == "create_ticket":
         pending = PendingAction(action_name="create_ticket", params_schema=TICKET_PARAMS)
@@ -318,12 +391,43 @@ def start_pending_action(action_name: str) -> tuple[PendingAction, ActionResult]
     else:
         raise ValueError(f"Unknown multi-turn action: {action_name}")
 
-    first = pending.next_missing
+    # Pre-fill any params we can extract from the initial message
+    if initial_message:
+        pre_extracted = _pre_extract_params(initial_message, action_name)
+        for key, value in pre_extracted.items():
+            pending.collected[key] = value
+
+    # Check if all params are now filled
+    if pending.is_complete:
+        if action_name == "create_ticket":
+            result = execute_create_ticket(pending.collected)
+        elif action_name == "device_transfer":
+            result = execute_device_transfer(pending.collected)
+        else:
+            result = ActionResult(name=action_name, answer="Action completed.", completed=True)
+        return pending, result
+
+    # Ask for the next missing param
+    next_param = pending.next_missing
+    # Build a summary of what we already got
+    pre_filled_parts = []
+    for key, value in pending.collected.items():
+        display = key.replace("_", " ").title()
+        pre_filled_parts.append(f"  - {display}: {value}")
+
+    if pre_filled_parts:
+        pre_summary = "I've noted the following from your message:\n" + "\n".join(pre_filled_parts) + "\n\n"
+    else:
+        pre_summary = ""
+
     result = ActionResult(
         name=action_name,
-        answer=first["prompt"],
+        answer=f"{pre_summary}{next_param['prompt']}",
         completed=False,
-        pending_params=[p["name"] for p in pending.params_schema],
+        pending_params=[
+            p["name"] for p in pending.params_schema
+            if p["name"] not in pending.collected
+        ],
     )
     return pending, result
 

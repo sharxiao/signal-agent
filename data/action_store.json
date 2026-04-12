@@ -19,6 +19,36 @@
       "status": "open",
       "created_at": "2026-04-12T02:00:24.381289+00:00",
       "updated_at": "2026-04-12T02:00:24.381289+00:00"
+    },
+    "SIG-D006066C": {
+      "ticket_id": "SIG-D006066C",
+      "issue_type": "verification",
+      "device_os": "Android",
+      "email": "test@example.com",
+      "description": "i cannot verify my email",
+      "status": "open",
+      "created_at": "2026-04-12T06:26:01.738505+00:00",
+      "updated_at": "2026-04-12T06:26:01.738505+00:00"
+    },
+    "SIG-3BCCEA28": {
+      "ticket_id": "SIG-3BCCEA28",
+      "issue_type": "verification",
+      "device_os": "iOS",
+      "email": "user@example.com",
+      "description": "i need some resources",
+      "status": "open",
+      "created_at": "2026-04-12T06:29:09.462380+00:00",
+      "updated_at": "2026-04-12T06:29:09.462380+00:00"
+    },
+    "SIG-325D9E0A": {
+      "ticket_id": "SIG-325D9E0A",
+      "issue_type": "security",
+      "device_os": "iOS",
+      "email": "user@example.com",
+      "description": "my phone was stolen",
+      "status": "open",
+      "created_at": "2026-04-12T06:53:52.469938+00:00",
+      "updated_at": "2026-04-12T06:53:52.469938+00:00"
     }
   },
   "transfers": {

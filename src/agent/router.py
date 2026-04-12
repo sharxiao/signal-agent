@@ -1,54 +1,38 @@
 """
 Intent routing for the Signal Support Agent.
 
-Changes from v1:
-- Action names aligned to new stateful actions: create_ticket, check_ticket, device_transfer
-- Added ambiguous intent handling (asks clarifying question)
+Two-tier routing:
+1. Fast regex-based classification for clear-cut intents
+2. LLM-based fallback for ambiguous or uncertain queries
 """
 
 from __future__ import annotations
 
+import json
+import logging
 import re
 from dataclasses import asdict, dataclass
 from typing import Optional
 
+import requests
+
+from src.agent.config import LLM_API_KEY, LLM_BASE_URL, LLM_MODEL
+
+logging.basicConfig(level=logging.INFO, format="%(levelname)s: %(message)s")
+log = logging.getLogger(__name__)
+
 SIGNAL_TERMS = {
-    "signal",
-    "message",
-    "messages",
-    "chat",
-    "chats",
-    "backup",
-    "restore",
-    "transfer",
-    "pin",
-    "registration",
-    "verification",
-    "code",
-    "desktop",
-    "android",
-    "ios",
-    "iphone",
-    "ipad",
-    "privacy",
-    "group",
-    "contacts",
-    "notification",
-    "notifications",
-    "sticker",
-    "delete",
-    "account",
-    "phone",
-    "ticket",
-    "migrate",
-    "linked",
-    "safety",
-    "block",
-    "disappearing",
-    "media",
-    "call",
-    "calling",
+    "signal", "message", "messages", "chat", "chats",
+    "backup", "restore", "transfer", "pin", "registration",
+    "verification", "code", "desktop", "android", "ios",
+    "iphone", "ipad", "privacy", "group", "contacts",
+    "notification", "notifications", "sticker", "delete",
+    "account", "phone", "ticket", "migrate", "linked",
+    "safety", "block", "disappearing", "media", "call", "calling",
 }
+
+VALID_INTENTS = {"greeting", "action", "knowledge", "off_topic", "ambiguous"}
+VALID_ACTIONS = {"create_ticket", "check_ticket", "device_transfer", None}
 
 
 @dataclass(frozen=True)
@@ -74,11 +58,127 @@ def detect_platform(message: str) -> Optional[str]:
     return None
 
 
+# ---------------------------------------------------------------------------
+# LLM-based intent classifier (fallback)
+# ---------------------------------------------------------------------------
+
+_LLM_CLASSIFY_PROMPT = """You are an intent classifier for a Signal messaging app support agent.
+
+Classify the user message into exactly ONE of these intents:
+- "knowledge" — user is asking a question about Signal features, setup, troubleshooting, privacy, or how something works
+- "action:create_ticket" — user wants to create/open/file a support ticket
+- "action:check_ticket" — user wants to check/look up an existing ticket status
+- "action:device_transfer" — user wants to start transferring Signal to a new device (not asking how — actually wants to do it)
+- "greeting" — user is saying hello or asking for general help
+- "off_topic" — question is not related to Signal at all
+- "ambiguous" — cannot determine intent, need more information
+
+Respond with ONLY a JSON object:
+{"intent": "...", "confidence": 0.0-1.0, "reason": "brief explanation"}
+
+User message: """
+
+
+def _classify_with_llm(message: str) -> Optional[RouteDecision]:
+    """Call the LLM to classify intent when regex is uncertain."""
+    try:
+        base = LLM_BASE_URL.rstrip("/")
+        url = f"{base}/v1/chat/completions"
+
+        payload = {
+            "model": LLM_MODEL,
+            "messages": [
+                {"role": "user", "content": _LLM_CLASSIFY_PROMPT + message}
+            ],
+            "max_tokens": 150,
+            "temperature": 0,
+        }
+
+        headers = {}
+        if LLM_API_KEY and LLM_API_KEY != "replace_me":
+            headers["Authorization"] = f"Bearer {LLM_API_KEY}"
+
+        response = requests.post(url, json=payload, headers=headers, timeout=15)
+        response.raise_for_status()
+        data = response.json()
+
+        content = data.get("choices", [{}])[0].get("message", {}).get("content", "")
+
+        # Handle list-type content from some models
+        if isinstance(content, list):
+            parts = []
+            for item in content:
+                if isinstance(item, dict) and item.get("type") == "text":
+                    parts.append(item.get("text", ""))
+            content = "\n".join(parts).strip()
+
+        if not content:
+            content = data.get("choices", [{}])[0].get("message", {}).get("reasoning_content", "")
+            if isinstance(content, list):
+                parts = []
+                for item in content:
+                    if isinstance(item, dict) and item.get("type") == "text":
+                        parts.append(item.get("text", ""))
+                    else:
+                        parts.append(str(item))
+                content = "\n".join(parts).strip()
+
+        # Parse JSON from response
+        content = content.strip()
+        content = re.sub(r"^```(?:json)?\s*", "", content)
+        content = re.sub(r"\s*```$", "", content)
+
+        match = re.search(r"\{.*\}", content, flags=re.DOTALL)
+        if not match:
+            return None
+
+        result = json.loads(match.group(0))
+        raw_intent = result.get("intent", "").strip().lower()
+        confidence = float(result.get("confidence", 0.5))
+        reason = result.get("reason", "LLM classification")
+
+        platform = detect_platform(message)
+
+        # Parse action intents
+        action_name = None
+        if raw_intent.startswith("action:"):
+            action_name = raw_intent.split(":", 1)[1]
+            if action_name not in {"create_ticket", "check_ticket", "device_transfer"}:
+                action_name = None
+                raw_intent = "knowledge"  # fallback
+            else:
+                raw_intent = "action"
+
+        if raw_intent not in VALID_INTENTS:
+            raw_intent = "knowledge"  # safe default
+
+        return RouteDecision(
+            intent=raw_intent,
+            action_name=action_name,
+            platform=platform,
+            confidence=confidence,
+            reason=f"LLM: {reason}",
+        )
+
+    except Exception as e:
+        log.warning(f"LLM intent classification failed: {e}")
+        return None
+
+
+# ---------------------------------------------------------------------------
+# Main routing logic
+# ---------------------------------------------------------------------------
+
 def route_message(message: str) -> RouteDecision:
+    """
+    Two-tier routing:
+    1. Fast regex match for clear intents
+    2. LLM fallback when regex is uncertain
+    """
     text = re.sub(r"\s+", " ", (message or "").strip().lower())
     platform = detect_platform(text)
 
-    # --- Greetings ---
+    # --- Greetings (high confidence, no LLM needed) ---
     if text in {"hi", "hello", "hey", "help", "start"}:
         return RouteDecision(
             intent="greeting",
@@ -87,7 +187,7 @@ def route_message(message: str) -> RouteDecision:
             reason="Short greeting.",
         )
 
-    # --- Actions ---
+    # --- Actions (regex) ---
     action_name = _detect_action(text)
     if action_name:
         return RouteDecision(
@@ -98,7 +198,7 @@ def route_message(message: str) -> RouteDecision:
             reason=f"Matched action: {action_name}.",
         )
 
-    # --- Signal knowledge ---
+    # --- Clear Signal knowledge ---
     if _looks_like_signal_support(text):
         return RouteDecision(
             intent="knowledge",
@@ -107,7 +207,12 @@ def route_message(message: str) -> RouteDecision:
             reason="Signal support terms detected.",
         )
 
-    # --- Ambiguous: has some signal-adjacent words but not clear ---
+    # --- Uncertain: use LLM to classify ---
+    llm_result = _classify_with_llm(text)
+    if llm_result and llm_result.confidence >= 0.5:
+        return llm_result
+
+    # --- Ambiguous (regex fallback) ---
     if _is_ambiguous(text):
         return RouteDecision(
             intent="ambiguous",
@@ -125,7 +230,15 @@ def route_message(message: str) -> RouteDecision:
     )
 
 
+# ---------------------------------------------------------------------------
+# Regex helpers
+# ---------------------------------------------------------------------------
+
 def _detect_action(text: str) -> Optional[str]:
+    # --- Negation check: skip action detection if user is refusing/cancelling ---
+    if _has_negation(text):
+        return None
+
     # Create ticket
     if re.search(r"\b(create|open|file|submit|new)\b.*\b(ticket|case|request|issue)\b", text):
         return "create_ticket"
@@ -140,9 +253,7 @@ def _detect_action(text: str) -> Optional[str]:
     if re.search(r"\bSIG-[A-Z0-9]+\b", text, re.IGNORECASE):
         return "check_ticket"
 
-    # Device transfer — only match explicit intent to START a transfer,
-    # not informational questions like "how do I transfer messages"
-    # Exclude patterns that start with "how", "can", "what", "why", "is" (knowledge questions)
+    # Device transfer — only explicit intent, not knowledge questions
     if _is_knowledge_question(text):
         return None
     if re.search(r"\b(transfer|move|migrate|switch)\b.*\b(device|phone|new phone|new device)\b", text):
@@ -155,8 +266,22 @@ def _detect_action(text: str) -> Optional[str]:
     return None
 
 
+def _has_negation(text: str) -> bool:
+    """Detect if the user is refusing or cancelling rather than requesting."""
+    negation_patterns = [
+        r"\b(don'?t|do not|doesn'?t|does not)\s+(want|need|wish)\b",
+        r"\b(no longer|not anymore|never mind|nevermind)\b",
+        r"\b(cancel|stop|abort|forget)\b.*\b(ticket|transfer|action|request)\b",
+        r"\b(i\s+)?don'?t\s+(want|need)\s+(to|a|the)\b",
+        r"\bnot\s+interested\b",
+    ]
+    for pattern in negation_patterns:
+        if re.search(pattern, text):
+            return True
+    return False
+
+
 def _is_knowledge_question(text: str) -> bool:
-    """Detect if the message is asking for information rather than requesting an action."""
     knowledge_prefixes = [
         r"^(how (do|can|to|does|should|would))\b",
         r"^(can (i|you|we))\b",
@@ -177,26 +302,14 @@ def _looks_like_signal_support(text: str) -> bool:
     if tokens & SIGNAL_TERMS:
         return True
     support_phrases = [
-        "not working",
-        "cannot send",
-        "can't send",
-        "cannot receive",
-        "can't receive",
-        "not getting",
-        "lost my",
-        "how do i",
-        "how to",
-        "set up",
-        "sign up",
+        "not working", "cannot send", "can't send",
+        "cannot receive", "can't receive", "not getting",
+        "lost my", "how do i", "how to", "set up", "sign up",
     ]
     return any(phrase in text for phrase in support_phrases)
 
 
 def _is_ambiguous(text: str) -> bool:
-    """
-    Catch borderline queries that might be Signal-related but lack
-    enough context — e.g. single words like 'help', vague phrases.
-    """
     ambiguous_patterns = [
         r"^(help|problem|issue|error|broken|fix|stuck|trouble)\s*$",
         r"^(it|this|that)\s+(doesn't|does not|won't|isn't|is not)\s+work",
