@@ -1,17 +1,13 @@
 # Signal Support Agent — Python dependencies
 # (install with pip install -r requirements.txt)
- 
+
 # RAG pipeline
-requests==2.31.0
+requests>=2.31.0
 openai>=1.0.0
-chromadb==0.5.3
- 
-# LLM / agent framework
-langchain==0.2.6
-langchain-community==0.2.6
- 
+chromadb>=0.4.0,<1.0.0
+
 # UI
-streamlit==1.35.0
- 
+streamlit>=1.35.0
+
 # Utilities
-python-dotenv==1.0.1
+python-dotenv>=1.0.0
