@@ -1,5 +1,9 @@
 """
 Intent routing for the Signal Support Agent.
+
+Changes from v1:
+- Action names aligned to new stateful actions: create_ticket, check_ticket, device_transfer
+- Added ambiguous intent handling (asks clarifying question)
 """
 
 from __future__ import annotations
@@ -7,7 +11,6 @@ from __future__ import annotations
 import re
 from dataclasses import asdict, dataclass
 from typing import Optional
-
 
 SIGNAL_TERMS = {
     "signal",
@@ -36,12 +39,21 @@ SIGNAL_TERMS = {
     "delete",
     "account",
     "phone",
+    "ticket",
+    "migrate",
+    "linked",
+    "safety",
+    "block",
+    "disappearing",
+    "media",
+    "call",
+    "calling",
 }
 
 
 @dataclass(frozen=True)
 class RouteDecision:
-    intent: str
+    intent: str  # greeting | action | knowledge | off_topic | ambiguous
     action_name: Optional[str] = None
     platform: Optional[str] = None
     confidence: float = 0.5
@@ -66,7 +78,8 @@ def route_message(message: str) -> RouteDecision:
     text = re.sub(r"\s+", " ", (message or "").strip().lower())
     platform = detect_platform(text)
 
-    if text in {"hi", "hello", "hey", "help"}:
+    # --- Greetings ---
+    if text in {"hi", "hello", "hey", "help", "start"}:
         return RouteDecision(
             intent="greeting",
             platform=platform,
@@ -74,6 +87,7 @@ def route_message(message: str) -> RouteDecision:
             reason="Short greeting.",
         )
 
+    # --- Actions ---
     action_name = _detect_action(text)
     if action_name:
         return RouteDecision(
@@ -81,9 +95,10 @@ def route_message(message: str) -> RouteDecision:
             action_name=action_name,
             platform=platform,
             confidence=0.85,
-            reason=f"Matched mocked action flow: {action_name}.",
+            reason=f"Matched action: {action_name}.",
         )
 
+    # --- Signal knowledge ---
     if _looks_like_signal_support(text):
         return RouteDecision(
             intent="knowledge",
@@ -92,6 +107,16 @@ def route_message(message: str) -> RouteDecision:
             reason="Signal support terms detected.",
         )
 
+    # --- Ambiguous: has some signal-adjacent words but not clear ---
+    if _is_ambiguous(text):
+        return RouteDecision(
+            intent="ambiguous",
+            platform=platform,
+            confidence=0.40,
+            reason="Query may be Signal-related but intent is unclear.",
+        )
+
+    # --- Off topic ---
     return RouteDecision(
         intent="off_topic",
         platform=platform,
@@ -101,23 +126,25 @@ def route_message(message: str) -> RouteDecision:
 
 
 def _detect_action(text: str) -> Optional[str]:
-    if re.search(r"\b(delete|deactivate|remove|close)\b.*\b(account)\b", text):
-        return "account_delete"
+    # Create ticket
+    if re.search(r"\b(create|open|file|submit|new)\b.*\b(ticket|case|request|issue)\b", text):
+        return "create_ticket"
+    if re.search(r"\b(ticket|case)\b.*\b(create|open|file|submit|new)\b", text):
+        return "create_ticket"
+    if "support ticket" in text:
+        return "create_ticket"
 
-    if re.search(r"\b(transfer|move|migrate|new phone|new device)\b", text):
-        return "transfer_device"
+    # Check ticket
+    if re.search(r"\b(check|status|look\s*up|find|track)\b.*\b(ticket|case)\b", text):
+        return "check_ticket"
+    if re.search(r"\bSIG-[A-Z0-9]+\b", text, re.IGNORECASE):
+        return "check_ticket"
 
-    if re.search(r"\b(backup|restore|recover)\b", text):
-        return "backup_messages"
-
-    if re.search(r"\b(verification|verify|sms|code|register)\b", text):
-        return "verification_code"
-
-    if re.search(r"\b(pin|registration lock)\b", text):
-        return "registration_pin"
-
-    if re.search(r"\b(contact|human|agent|support ticket)\b", text):
-        return "contact_support"
+    # Device transfer
+    if re.search(r"\b(transfer|move|migrate|switch)\b.*\b(device|phone|new phone|new device)\b", text):
+        return "device_transfer"
+    if re.search(r"\bnew (phone|device|iphone|android)\b", text):
+        return "device_transfer"
 
     return None
 
@@ -126,7 +153,6 @@ def _looks_like_signal_support(text: str) -> bool:
     tokens = set(re.findall(r"[a-z0-9]+", text))
     if tokens & SIGNAL_TERMS:
         return True
-
     support_phrases = [
         "not working",
         "cannot send",
@@ -135,5 +161,25 @@ def _looks_like_signal_support(text: str) -> bool:
         "can't receive",
         "not getting",
         "lost my",
+        "how do i",
+        "how to",
+        "set up",
+        "sign up",
     ]
     return any(phrase in text for phrase in support_phrases)
+
+
+def _is_ambiguous(text: str) -> bool:
+    """
+    Catch borderline queries that might be Signal-related but lack
+    enough context — e.g. single words like 'help', vague phrases.
+    """
+    ambiguous_patterns = [
+        r"^(help|problem|issue|error|broken|fix|stuck|trouble)\s*$",
+        r"^(it|this|that)\s+(doesn't|does not|won't|isn't|is not)\s+work",
+        r"^(can you|could you|please)\s+(help|assist)\b",
+    ]
+    for pattern in ambiguous_patterns:
+        if re.search(pattern, text):
+            return True
+    return False

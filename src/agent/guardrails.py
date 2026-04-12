@@ -1,5 +1,9 @@
 """
 Guardrails for the Signal Support Agent.
+
+Changes from v1:
+- Added prompt injection detection patterns
+- Added jailbreak attempt detection
 """
 
 from __future__ import annotations
@@ -7,9 +11,9 @@ from __future__ import annotations
 import re
 from dataclasses import asdict, dataclass
 
-
 MAX_MESSAGE_CHARS = 4000
 
+# --- Unsafe intent patterns ---
 UNSAFE_PATTERNS = [
     r"\b(read|spy|monitor|intercept)\b.*\b(someone|partner|wife|husband|friend|their)\b.*\b(signal|messages|texts)\b",
     r"\b(hack|break into|bypass)\b.*\b(signal|account|encryption|pin|password)\b",
@@ -17,6 +21,24 @@ UNSAFE_PATTERNS = [
     r"\bdecrypt\b.*\b(signal|messages|backup)\b",
 ]
 
+# --- Prompt injection patterns ---
+INJECTION_PATTERNS = [
+    r"ignore\s+(all\s+)?(previous|prior|above|earlier)\s+(instructions?|prompts?|rules?|directions?)",
+    r"disregard\s+(all\s+)?(previous|prior|above|earlier)\s+(instructions?|prompts?|rules?)",
+    r"you\s+are\s+now\s+(a|an|my)\s+",
+    r"act\s+as\s+(a|an|if)\s+",
+    r"pretend\s+(you\s+are|to\s+be|you're)\s+",
+    r"(new|override|replace|change)\s+(system\s+)?(prompt|instructions?|persona|role)",
+    r"system\s*:\s*",
+    r"\bsystem\s+prompt\b",
+    r"reveal\s+(your|the)\s+(system\s+)?(prompt|instructions?)",
+    r"(what|show|tell|repeat|print)\s+(me\s+)?(your|the)\s+(system\s+)?(prompt|instructions?|rules?)",
+    r"jailbreak",
+    r"DAN\s+mode",
+    r"\bdo\s+anything\s+now\b",
+]
+
+# --- Sensitive data redaction ---
 SENSITIVE_REDACTIONS = [
     (re.compile(r"\b\d{6}\b"), "[redacted-code]"),
     (re.compile(r"\+?\d[\d\s().-]{7,}\d"), "[redacted-phone]"),
@@ -44,8 +66,10 @@ def redact_sensitive_text(text: str) -> str:
 def check_user_message(message: str) -> GuardrailDecision:
     """
     Decide whether a user message should be handled by the support agent.
+    Checks for: empty, too long, unsafe intent, and prompt injection.
     """
     normalized = re.sub(r"\s+", " ", (message or "").strip())
+
     if not normalized:
         return GuardrailDecision(
             allowed=False,
@@ -61,14 +85,30 @@ def check_user_message(message: str) -> GuardrailDecision:
         )
 
     lowered = normalized.lower()
+
+    # Check unsafe intent
     for pattern in UNSAFE_PATTERNS:
         if re.search(pattern, lowered):
             return GuardrailDecision(
                 allowed=False,
                 reason="unsafe_request",
                 message=(
-                    "I cannot help access, monitor, decrypt, or bypass someone else's Signal account or messages. "
-                    "I can help with your own Signal setup, privacy, safety, or troubleshooting questions."
+                    "I cannot help access, monitor, decrypt, or bypass someone else's "
+                    "Signal account or messages. I can help with your own Signal setup, "
+                    "privacy, safety, or troubleshooting questions."
+                ),
+            )
+
+    # Check prompt injection
+    for pattern in INJECTION_PATTERNS:
+        if re.search(pattern, lowered):
+            return GuardrailDecision(
+                allowed=False,
+                reason="prompt_injection",
+                message=(
+                    "I'm a Signal support assistant and I can only help with "
+                    "Signal-related questions. Please ask a support question "
+                    "about Signal setup, privacy, backups, transfers, or troubleshooting."
                 ),
             )
 

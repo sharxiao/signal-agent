@@ -95,10 +95,11 @@ def _build_context(results: list[dict]) -> str:
     return "\n---\n".join(blocks)
 
 
-def _build_messages(query: str, context: str) -> list[dict[str, str]]:
+def _build_messages(query: str, context: str, conversation_history: str = "") -> list[dict[str, str]]:
     """
     OpenAI-compatible chat messages.
     Forces grounded answering and JSON-only output.
+    Includes conversation history when available.
     """
     system_prompt = (
         "You are a support QA assistant for Signal.\n"
@@ -107,6 +108,8 @@ def _build_messages(query: str, context: str) -> list[dict[str, str]]:
         "If the documentation is insufficient, say so clearly.\n"
         "Do NOT guess, infer hidden steps, or invent unsupported claims.\n"
         "Keep the answer concise, practical, and support-oriented.\n"
+        "If conversation history is provided, use it to understand context "
+        "and resolve references like 'it', 'that', 'the same thing', etc.\n"
         "Return JSON only with the following schema:\n"
         "{\n"
         '  "answer": string,\n'
@@ -121,10 +124,16 @@ def _build_messages(query: str, context: str) -> list[dict[str, str]]:
         "- If fallback is true, citations can be an empty list.\n"
     )
 
+    history_block = ""
+    if conversation_history:
+        history_block = f"Previous conversation context:\n{conversation_history}\n\n"
+
     user_prompt = (
+        f"{history_block}"
         f"User question:\n{query}\n\n"
         f"Retrieved Signal help documentation:\n{context}\n\n"
-        "Now answer the question using only the retrieved documentation."
+        "Now answer the question using only the retrieved documentation. "
+        "Use the conversation context if it helps clarify what the user is asking about."
     )
 
     return [
@@ -266,9 +275,10 @@ def answer_knowledge_query(
     n_results: int = DEFAULT_TOP_K,
     platform_filter: Optional[str] = None,
     category_filter: Optional[str] = None,
+    conversation_history: str = "",
 ) -> dict[str, Any]:
     """
-    Main entry point for Member 2's QA layer.
+    Main entry point for the QA layer.
 
     Returns:
     {
@@ -310,7 +320,7 @@ def answer_knowledge_query(
         return {
             "query": query,
             "answer": (
-                "I couldn’t find enough relevant information in the official Signal "
+                "I couldn't find enough relevant information in the official Signal "
                 "help documentation to answer that confidently."
             ),
             "grounded": False,
@@ -322,7 +332,7 @@ def answer_knowledge_query(
         }
 
     context = _build_context(results)
-    messages = _build_messages(query, context)
+    messages = _build_messages(query, context, conversation_history)
 
     try:
         llm_output = _call_llm(messages)
@@ -387,7 +397,7 @@ def answer_knowledge_query(
     # Defensive fallback if model returns empty answer
     if not answer:
         answer = (
-            "I couldn’t generate a reliable answer from the retrieved Signal help documentation."
+            "I couldn't generate a reliable answer from the retrieved Signal help documentation."
         )
         grounded = False
         fallback = True
