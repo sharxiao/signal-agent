@@ -10,17 +10,26 @@ from dotenv import load_dotenv
 load_dotenv()
 os.environ["ANONYMIZED_TELEMETRY"] = "False"
 
-# project root and data directories
-ROOT_DIR = Path(__file__).resolve()         # signal_agent/
-while ROOT_DIR.name != "Signal_Agent":
-    ROOT_DIR = ROOT_DIR.parent
+# project root detection — works both locally and on Streamlit Cloud
+# Local: .../Signal_Agent/src/agent/config.py
+# Cloud: /mount/src/signal_agent/src/agent/config.py
+def _find_root() -> Path:
+    """Find project root by looking for src/agent/ directory."""
+    current = Path(__file__).resolve().parent
+    while current != current.parent:
+        if (current / "src" / "agent").is_dir() and (current / "app.py").exists():
+            return current
+        current = current.parent
+    # Fallback: assume config.py is at src/agent/config.py
+    return Path(__file__).resolve().parent.parent.parent
+
+ROOT_DIR = _find_root()
 
 DATA_DIR        = ROOT_DIR / "data"
-RAW_DIR         = DATA_DIR / "raw"          # raw JSON from Zendesk API
-CHUNKS_DIR      = DATA_DIR / "chunks"       # processed chunks as JSON
-CHROMADB_DIR    = DATA_DIR / "chromadb"     # ChromaDB persistent storage
+RAW_DIR         = DATA_DIR / "raw"
+CHUNKS_DIR      = DATA_DIR / "chunks"
+CHROMADB_DIR    = DATA_DIR / "chromadb"
 
-# create directories if they don't exist
 for _dir in [RAW_DIR, CHUNKS_DIR, CHROMADB_DIR]:
     _dir.mkdir(parents=True, exist_ok=True)
 
@@ -32,22 +41,19 @@ ZENDESK_SECTIONS_URL = (
     "https://support.signal.org/api/v2/help_center/en-us/sections.json"
 )
 
-ARTICLES_PER_PAGE = 30   # zendesk default; 154 articles = 6 pages
-REQUEST_DELAY     = 0.5  # seconds between API requests
+ARTICLES_PER_PAGE = 30
+REQUEST_DELAY     = 0.5
 
-# raw data file names
 RAW_ARTICLES_FILE = RAW_DIR / "articles.json"
 RAW_SECTIONS_FILE = RAW_DIR / "sections.json"
 CHUNKS_FILE       = CHUNKS_DIR / "chunks.json"
 
-# chunking parameters
 CHUNK_SIZE    = 400
 CHUNK_OVERLAP = 100
 DEFAULT_TOP_K = 5
 
 def _read_student_id(id_file: str = "ID.txt") -> str:
     """Read student ID from Streamlit secrets (cloud) or ID.txt (local)."""
-    # Try Streamlit secrets first (for cloud deployment)
     try:
         import streamlit as st
         if hasattr(st, "secrets") and "STUDENT_ID" in st.secrets:
@@ -55,12 +61,14 @@ def _read_student_id(id_file: str = "ID.txt") -> str:
     except Exception:
         pass
 
-    # Fall back to ID.txt (local development)
-    id_path = Path(id_file)
+    id_path = ROOT_DIR / id_file
+    if not id_path.exists():
+        id_path = Path(id_file)
     if not id_path.exists():
         raise FileNotFoundError(
             "ID.txt not found. Create it at the project root with:\n"
-            "  Line 1: student ID"
+            "  Line 1: student ID\n"
+            "Or set STUDENT_ID in Streamlit secrets for cloud deployment."
         )
     with open(id_path, "r") as f:
         lines = f.readlines()
@@ -71,18 +79,14 @@ def _read_student_id(id_file: str = "ID.txt") -> str:
         raise ValueError("Student ID cannot be empty!")
     return student_id
 
-# api authentication
 STUDENT_ID = _read_student_id()
 
-# embedding endpoint
 EMBEDDING_BASE_URL = "https://rsm-8430-a2.bjlkeng.io"
 EMBEDDING_API_KEY  = STUDENT_ID
 EMBEDDING_MODEL = ""
 
-# ChromaDB
 CHROMA_COLLECTION_NAME = "signal_support"
 
-# LLM endpoint
 LLM_BASE_URL   = "https://rsm-8430-finalproject.bjlkeng.io"
 LLM_API_KEY    = STUDENT_ID
 LLM_MODEL      = "qwen3-30b-a3b-fp8"
