@@ -191,6 +191,47 @@ def _wants_to_cancel(message: str, pending: PendingAction) -> bool:
 
 
 # ---------------------------------------------------------------------------
+# Negated-action detection (no pending action)
+# ---------------------------------------------------------------------------
+
+_NEGATED_ACTION_PATTERNS = [
+    r"\b(don'?t|do not|doesn'?t|does not)\s+(want|need|wish)\s+(to|a|the)\b",
+    r"\b(no longer|not anymore|never mind|nevermind)\b",
+    r"\bnot\s+interested\b",
+    r"\bi\s+changed\s+my\s+mind\b",
+]
+
+_ACTION_TARGET_PATTERNS = [
+    r"\bticket\b",
+    r"\bcase\b",
+    r"\btransfer\b",
+    r"\bmove\b",
+    r"\bmigrate\b",
+    r"\brequest\b",
+    r"\bcreate\b",
+    r"\bopen\b",
+    r"\bfile\b",
+    r"\bsubmit\b",
+]
+
+
+def _is_negated_action_request(message: str) -> bool:
+    """
+    Detect action-like requests that are actually refusals/cancellations,
+    e.g.:
+      - "I don't want to create a ticket"
+      - "never mind the transfer"
+      - "not interested in opening a case"
+    """
+    text = re.sub(r"\s+", " ", (message or "").strip().lower())
+
+    has_negation = any(re.search(p, text) for p in _NEGATED_ACTION_PATTERNS)
+    has_action_target = any(re.search(p, text) for p in _ACTION_TARGET_PATTERNS)
+
+    return has_negation and has_action_target
+
+
+# ---------------------------------------------------------------------------
 # Agent
 # ---------------------------------------------------------------------------
 
@@ -286,6 +327,31 @@ class SupportAgent:
                     pending_action.to_dict() if not action_result.completed else None
                 )
                 return result
+
+        # --- Negated action request (no pending action) ---
+        if pending_action is None and _is_negated_action_request(safe_message):
+            result = ConversationTurn(
+                query=safe_message,
+                answer=(
+                    "No problem — I won't create a ticket or start an action. "
+                    "Let me know if you need help with something else."
+                ),
+                intent="action",
+                route={
+                    "intent": "action",
+                    "action_name": None,
+                    "platform": detect_platform(safe_message),
+                    "confidence": 0.95,
+                    "reason": "Negated action request.",
+                },
+                guardrail=guardrail.to_dict(),
+                grounded=False,
+                fallback=False,
+                sources=[],
+                reason_if_fallback="",
+            ).to_dict()
+            result["pending_action"] = None
+            return result
 
         # --- Route the message ---
         route = route_message(safe_message)

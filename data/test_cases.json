@@ -333,14 +333,14 @@
       "id": "tc_routing_negation",
       "type": "routing",
       "query": "i don't want to create a ticket",
-      "expected_intent": "knowledge",
-      "acceptable_intents": ["knowledge", "off_topic", "ambiguous", "greeting"],
-      "not_expected_action": "create_ticket",
+      "expected_intent": "action",
+     "acceptable_intents": ["action", "knowledge", "off_topic", "ambiguous", "greeting"],
+     "not_expected_action": "create_ticket",
       "expected_topic": "negation_handling",
-      "platform_filter": "All",
-      "gold_source_articles": [],
-      "gold_answer_notes": "Should NOT trigger create_ticket action. Negation should be detected.",
-      "expected_fallback": false
+     "platform_filter": "All",
+     "gold_source_articles": [],
+     "gold_answer_notes": "Should detect negation, avoid triggering create_ticket, and respond without fallback.",
+     "expected_fallback": false
     },
     {
       "id": "tc_edge_nonexistent_feature",
