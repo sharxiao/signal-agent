@@ -44,6 +44,20 @@ def _save_store(store: dict[str, Any], path: Path = _DEFAULT_STORE_PATH) -> None
         json.dump(store, f, indent=2, ensure_ascii=False)
 
 
+def load_user_store(user_id: str) -> dict[str, dict]:
+    """Load only the tickets and transfers belonging to a specific user."""
+    store = _load_store()
+    user_tickets = {
+        tid: t for tid, t in store.get("tickets", {}).items()
+        if t.get("user_id", "anonymous") == user_id
+    }
+    user_transfers = {
+        trf_id: t for trf_id, t in store.get("transfers", {}).items()
+        if t.get("user_id", "anonymous") == user_id
+    }
+    return {"tickets": user_tickets, "transfers": user_transfers}
+
+
 # ---------------------------------------------------------------------------
 # Data models
 # ---------------------------------------------------------------------------
@@ -184,13 +198,14 @@ def _generate_transfer_id() -> str:
     return f"TRF-{short}"
 
 
-def execute_create_ticket(params: dict[str, str]) -> ActionResult:
+def execute_create_ticket(params: dict[str, str], user_id: str = "anonymous") -> ActionResult:
     """Create a support ticket and persist it."""
     ticket_id = _generate_ticket_id()
     now = datetime.now(timezone.utc).isoformat()
 
     ticket = {
         "ticket_id": ticket_id,
+        "user_id": user_id,
         "issue_type": params["issue_type"],
         "device_os": params["device_os"],
         "email": params["email"],
@@ -204,7 +219,7 @@ def execute_create_ticket(params: dict[str, str]) -> ActionResult:
     store["tickets"][ticket_id] = ticket
     _save_store(store)
 
-    log.info(f"Created ticket {ticket_id}")
+    log.info(f"Created ticket {ticket_id} for user {user_id}")
 
     return ActionResult(
         name="create_ticket",
@@ -265,13 +280,14 @@ def execute_check_ticket(params: dict[str, str]) -> ActionResult:
     )
 
 
-def execute_device_transfer(params: dict[str, str]) -> ActionResult:
+def execute_device_transfer(params: dict[str, str], user_id: str = "anonymous") -> ActionResult:
     """Store a mock device transfer / migration request."""
     transfer_id = _generate_transfer_id()
     now = datetime.now(timezone.utc).isoformat()
 
     transfer = {
         "transfer_id": transfer_id,
+        "user_id": user_id,
         "source_device": params["source_device"],
         "target_device": params["target_device"],
         "transfer_type": params["transfer_type"],
@@ -283,7 +299,7 @@ def execute_device_transfer(params: dict[str, str]) -> ActionResult:
     store["transfers"][transfer_id] = transfer
     _save_store(store)
 
-    log.info(f"Created transfer request {transfer_id}")
+    log.info(f"Created transfer request {transfer_id} for user {user_id}")
 
     return ActionResult(
         name="device_transfer",
@@ -379,7 +395,7 @@ def _pre_extract_params(message: str, action_name: str) -> dict[str, str]:
     return extracted
 
 
-def start_pending_action(action_name: str, initial_message: str = "") -> tuple[PendingAction, ActionResult]:
+def start_pending_action(action_name: str, initial_message: str = "", user_id: str = "anonymous") -> tuple[PendingAction, ActionResult]:
     """
     Begin a new multi-turn action. Pre-extracts any parameters from the
     initial message. Returns the PendingAction state and the next prompt.
@@ -400,9 +416,9 @@ def start_pending_action(action_name: str, initial_message: str = "") -> tuple[P
     # Check if all params are now filled
     if pending.is_complete:
         if action_name == "create_ticket":
-            result = execute_create_ticket(pending.collected)
+            result = execute_create_ticket(pending.collected, user_id=user_id)
         elif action_name == "device_transfer":
-            result = execute_device_transfer(pending.collected)
+            result = execute_device_transfer(pending.collected, user_id=user_id)
         else:
             result = ActionResult(name=action_name, answer="Action completed.", completed=True)
         return pending, result
@@ -435,6 +451,7 @@ def start_pending_action(action_name: str, initial_message: str = "") -> tuple[P
 def continue_pending_action(
     pending: PendingAction,
     user_input: str,
+    user_id: str = "anonymous",
 ) -> tuple[PendingAction, ActionResult]:
     """
     Feed the next user message into the pending action.
@@ -504,9 +521,9 @@ def continue_pending_action(
 
     # All params collected — execute the action
     if pending.action_name == "create_ticket":
-        result = execute_create_ticket(pending.collected)
+        result = execute_create_ticket(pending.collected, user_id=user_id)
     elif pending.action_name == "device_transfer":
-        result = execute_device_transfer(pending.collected)
+        result = execute_device_transfer(pending.collected, user_id=user_id)
     else:
         result = ActionResult(
             name=pending.action_name,

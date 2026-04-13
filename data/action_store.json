@@ -79,6 +79,17 @@
       "status": "open",
       "created_at": "2026-04-12T17:48:54.970095+00:00",
       "updated_at": "2026-04-12T17:48:54.970095+00:00"
+    },
+    "SIG-C9AB2C9A": {
+      "ticket_id": "SIG-C9AB2C9A",
+      "user_id": "bob",
+      "issue_type": "security",
+      "device_os": "iOS",
+      "email": "demo@example.com",
+      "description": "my phone was stolen",
+      "status": "open",
+      "created_at": "2026-04-13T00:07:15.188445+00:00",
+      "updated_at": "2026-04-13T00:07:15.188445+00:00"
     }
   },
   "transfers": {

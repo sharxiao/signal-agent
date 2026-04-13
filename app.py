@@ -3,10 +3,13 @@ Streamlit chat UI for the Signal Support Agent.
 
 Features:
 - Signal blue theme with custom CSS
+- Demo login (user-scoped ticket/transfer history)
 - Quick-action buttons for common tasks
 - Multi-turn progress indicator
-- Sidebar with ticket/transfer history
+- Sidebar with ticket/transfer history (per-user)
 - Conversation memory
+- Confidence badges
+- Password protection for deployment
 """
 
 from __future__ import annotations
@@ -17,7 +20,7 @@ from pathlib import Path
 import streamlit as st
 
 # ---------------------------------------------------------------------------
-# Page config & theme
+# Page config (must be first Streamlit call)
 # ---------------------------------------------------------------------------
 
 st.set_page_config(
@@ -27,8 +30,8 @@ st.set_page_config(
     initial_sidebar_state="expanded",
 )
 
-from src.agent.actions import PendingAction, _load_store, TICKET_PARAMS, TRANSFER_PARAMS
-
+from src.agent.actions import PendingAction, load_user_store, TICKET_PARAMS, TRANSFER_PARAMS
+from src.agent.conversation import SupportAgent
 
 # ---------------------------------------------------------------------------
 # Password protection (for deployed version)
@@ -36,14 +39,13 @@ from src.agent.actions import PendingAction, _load_store, TICKET_PARAMS, TRANSFE
 
 def check_password() -> bool:
     """Returns True if the user has entered the correct password."""
-    # Skip auth if no password is configured (local development)
     try:
         app_password = st.secrets.get("APP_PASSWORD", "")
     except Exception:
-        return True  # No secrets file — running locally, skip auth
+        return True
 
     if not app_password:
-        return True  # No password set, skip auth
+        return True
 
     if "authenticated" not in st.session_state:
         st.session_state.authenticated = False
@@ -65,7 +67,62 @@ def check_password() -> bool:
 if not check_password():
     st.stop()
 
-# Signal brand colors
+# ---------------------------------------------------------------------------
+# Demo login (user identification)
+# ---------------------------------------------------------------------------
+
+def get_user_id() -> str | None:
+    """Show a simple login screen and return the user ID."""
+    if "user_id" not in st.session_state:
+        st.session_state.user_id = None
+
+    if st.session_state.user_id:
+        return st.session_state.user_id
+
+    st.markdown(
+        """
+        <div style="background: linear-gradient(135deg, #3A76F0, #1B4AB5);
+                    padding: 2rem; border-radius: 12px; text-align: center; margin-bottom: 1.5rem;">
+            <div style="font-size: 40px; margin-bottom: 8px;">💬</div>
+            <h1 style="color: white; margin: 0; font-size: 1.8rem;">Signal Support Agent</h1>
+            <p style="color: rgba(255,255,255,0.85); margin: 8px 0 0; font-size: 0.9rem;">
+                Enter your name to get started
+            </p>
+        </div>
+        """,
+        unsafe_allow_html=True,
+    )
+
+    col1, col2, col3 = st.columns([1, 2, 1])
+    with col2:
+        name = st.text_input(
+            "Your name",
+            key="login_name",
+            placeholder="e.g. Alice, Bob, ta-demo",
+            label_visibility="collapsed",
+        )
+        if st.button("Start Chat →", use_container_width=True, type="primary"):
+            if name.strip():
+                st.session_state.user_id = name.strip().lower()
+                st.rerun()
+            else:
+                st.warning("Please enter a name.")
+
+    st.caption(
+        "Each user has their own ticket and transfer history. "
+        "Try logging in as different users to see isolated data."
+    )
+    return None
+
+
+user_id = get_user_id()
+if not user_id:
+    st.stop()
+
+# ---------------------------------------------------------------------------
+# Signal brand theme
+# ---------------------------------------------------------------------------
+
 SIGNAL_BLUE = "#3A76F0"
 SIGNAL_BLUE_LIGHT = "#EBF1FE"
 SIGNAL_BLUE_DARK = "#1B4AB5"
@@ -73,7 +130,6 @@ SIGNAL_BLUE_DARK = "#1B4AB5"
 st.markdown(
     f"""
     <style>
-    /* Header bar */
     .signal-header {{
         background: linear-gradient(135deg, {SIGNAL_BLUE}, {SIGNAL_BLUE_DARK});
         padding: 1.2rem 1.5rem;
@@ -105,8 +161,6 @@ st.markdown(
         font-size: 22px;
         flex-shrink: 0;
     }}
-
-    /* Progress bar for multi-turn */
     .progress-container {{
         background: {SIGNAL_BLUE_LIGHT};
         border: 1px solid {SIGNAL_BLUE}33;
@@ -147,8 +201,6 @@ st.markdown(
         font-size: 0.75rem;
         color: #555;
     }}
-
-    /* Sidebar styling */
     .sidebar-section-title {{
         font-size: 0.75rem;
         font-weight: 600;
@@ -189,6 +241,15 @@ st.markdown(
         font-size: 0.75rem;
         margin-top: 2px;
     }}
+    .user-badge {{
+        display: inline-block;
+        padding: 2px 10px;
+        border-radius: 10px;
+        font-size: 0.75rem;
+        font-weight: 500;
+        background: {SIGNAL_BLUE_LIGHT};
+        color: {SIGNAL_BLUE_DARK};
+    }}
     </style>
     """,
     unsafe_allow_html=True,
@@ -200,8 +261,7 @@ st.markdown(
 # ---------------------------------------------------------------------------
 
 @st.cache_resource(show_spinner="Loading Signal support agent...")
-def load_agent():
-    from src.agent.conversation import SupportAgent
+def load_agent() -> SupportAgent:
     return SupportAgent()
 
 
@@ -251,19 +311,14 @@ def render_sources(sources: list[dict]) -> None:
 
 
 def render_confidence_badge(metadata: dict) -> None:
-    """Show a confidence level badge based on grounded flag and retrieval quality."""
     if not metadata:
         return
-
     intent = metadata.get("intent", "")
-    # Don't show confidence for non-knowledge intents
     if intent in ("greeting", "action", "blocked", "ambiguous", "off_topic"):
         return
-
     grounded = metadata.get("grounded", False)
     fallback = metadata.get("fallback", False)
     sources = metadata.get("sources", [])
-
     if fallback:
         level, color, bg = "Low", "#856404", "#FFF3CD"
     elif grounded and len(sources) >= 2:
@@ -272,7 +327,6 @@ def render_confidence_badge(metadata: dict) -> None:
         level, color, bg = "Medium", "#1B4AB5", "#EBF1FE"
     else:
         level, color, bg = "Medium", "#1B4AB5", "#EBF1FE"
-
     retrieval_method = ""
     if sources:
         methods = set()
@@ -282,7 +336,6 @@ def render_confidence_badge(metadata: dict) -> None:
                 methods.add(m)
         if methods:
             retrieval_method = f" · {', '.join(methods)}"
-
     st.markdown(
         f'<span style="display:inline-block;padding:2px 10px;border-radius:10px;'
         f'font-size:0.7rem;font-weight:500;background:{bg};color:{color};'
@@ -292,14 +345,11 @@ def render_confidence_badge(metadata: dict) -> None:
 
 
 def render_progress_bar(pending_action_data: dict) -> None:
-    """Show a visual progress indicator for multi-turn actions."""
     if not pending_action_data:
         return
-
     action_name = pending_action_data.get("action_name", "")
     collected = pending_action_data.get("collected", {})
     remaining = pending_action_data.get("remaining", [])
-
     param_schemas = {
         "create_ticket": TICKET_PARAMS,
         "device_transfer": TRANSFER_PARAMS,
@@ -307,16 +357,13 @@ def render_progress_bar(pending_action_data: dict) -> None:
     schema = param_schemas.get(action_name, [])
     if not schema:
         return
-
     total = len(schema)
     done_count = len(collected)
-
     action_labels = {
         "create_ticket": "Creating Support Ticket",
         "device_transfer": "Device Transfer Request",
     }
     title = action_labels.get(action_name, "Action in Progress")
-
     steps_html = ""
     for i, param in enumerate(schema):
         name = param["name"]
@@ -326,10 +373,8 @@ def render_progress_bar(pending_action_data: dict) -> None:
             steps_html += '<div class="step current"></div>'
         else:
             steps_html += '<div class="step"></div>'
-
     next_param = remaining[0].replace("_", " ").title() if remaining else "Done"
     label = f"Step {done_count + 1} of {total} — Next: {next_param}"
-
     st.markdown(
         f"""
         <div class="progress-container">
@@ -343,14 +388,13 @@ def render_progress_bar(pending_action_data: dict) -> None:
 
 
 def render_sidebar_history():
-    """Show ticket and transfer records in the sidebar."""
-    store = _load_store()
+    """Show ticket and transfer records for the current user only."""
+    store = load_user_store(st.session_state.user_id)
     tickets = store.get("tickets", {})
     transfers = store.get("transfers", {})
 
     st.sidebar.markdown("---")
 
-    # Tickets section
     if tickets:
         st.sidebar.markdown(
             '<div class="sidebar-section-title">🎫 Support Tickets</div>',
@@ -376,7 +420,6 @@ def render_sidebar_history():
                 unsafe_allow_html=True,
             )
 
-    # Transfers section
     if transfers:
         st.sidebar.markdown(
             '<div class="sidebar-section-title">📱 Transfer Requests</div>',
@@ -404,13 +447,9 @@ def render_sidebar_history():
 
 
 def build_history() -> list[dict[str, str]]:
-    """Convert session messages into the history format expected by the agent."""
     history = []
     for msg in st.session_state.messages:
-        history.append({
-            "role": msg["role"],
-            "content": msg["content"],
-        })
+        history.append({"role": msg["role"], "content": msg["content"]})
     return history
 
 
@@ -425,10 +464,24 @@ agent = load_agent()
 # --- Sidebar ---
 st.sidebar.title("📋 Actions & History")
 
-if st.sidebar.button("➕ New Chat", use_container_width=True):
-    st.session_state.messages = []
-    st.session_state.pending_action = None
-    st.rerun()
+# Show current user with badge
+st.sidebar.markdown(
+    f'<span class="user-badge">👤 {st.session_state.user_id}</span>',
+    unsafe_allow_html=True,
+)
+
+col_new, col_switch = st.sidebar.columns(2)
+with col_new:
+    if st.button("➕ New Chat", use_container_width=True):
+        st.session_state.messages = []
+        st.session_state.pending_action = None
+        st.rerun()
+with col_switch:
+    if st.button("🚪 Switch User", use_container_width=True):
+        st.session_state.user_id = None
+        st.session_state.messages = []
+        st.session_state.pending_action = None
+        st.rerun()
 
 render_sidebar_history()
 
@@ -438,7 +491,7 @@ if "messages" not in st.session_state:
         {
             "role": "assistant",
             "content": (
-                "Hi! I can help with Signal support questions — "
+                f"Hi {st.session_state.user_id.title()}! I can help with Signal support questions — "
                 "setup, troubleshooting, privacy, backups, transfers, "
                 "and verification. I can also create a support ticket "
                 "or help with a device transfer. What do you need?"
@@ -461,6 +514,7 @@ if not st.session_state.pending_action:
             response = agent.chat(
                 "I want to create a support ticket",
                 history=build_history(),
+                user_id=st.session_state.user_id,
             )
             st.session_state.pending_action = response.get("pending_action")
             st.session_state.messages.append({
@@ -489,6 +543,7 @@ if not st.session_state.pending_action:
             response = agent.chat(
                 "I want to transfer to a new phone",
                 history=build_history(),
+                user_id=st.session_state.user_id,
             )
             st.session_state.pending_action = response.get("pending_action")
             st.session_state.messages.append({
@@ -530,6 +585,7 @@ if user_message:
                 user_message,
                 history=build_history(),
                 pending_action=pending_action,
+                user_id=st.session_state.user_id,
             )
         st.markdown(response["answer"])
         render_confidence_badge(response)

@@ -269,6 +269,48 @@ def answer_relevancy(case: dict[str, Any], response: dict[str, Any]) -> float:
         # For routing, check that intent was correct
         return intent_correct_score(case, response)
 
+    if case_type == "edge_case":
+        # For edge cases, check if agent handled it gracefully
+        answer = normalize_text(response.get("answer", ""))
+        expected_fallback = bool(case.get("expected_fallback", False))
+        actual_fallback = bool(response.get("fallback", False))
+        # If expected to fallback (e.g. nonexistent feature), check that it did
+        if expected_fallback:
+            if actual_fallback:
+                return 1.0
+            # Also accept if agent says it doesn't have info
+            no_info_signals = ["not found", "don't have", "no information", "not available",
+                              "not in the documentation", "not supported", "does not", "couldn't find"]
+            hits = sum(1 for s in no_info_signals if s in answer)
+            return round(min(hits / 1, 1.0), 4)
+        return round(overlap_score(case.get("gold_answer_notes", ""), answer), 4)
+
+    if case_type == "error_handling":
+        answer = normalize_text(response.get("answer", ""))
+        expected_topic = case.get("expected_topic", "")
+
+        if expected_topic == "empty_input":
+            # Should ask user to enter a question
+            signals = ["enter", "provide", "question", "please"]
+            hits = sum(1 for s in signals if s in answer)
+            return round(min(hits / 2, 1.0), 4)
+
+        if expected_topic == "ticket_not_found":
+            # Should say ticket not found
+            signals = ["not found", "no ticket", "double-check", "try again"]
+            hits = sum(1 for s in signals if s in answer)
+            return round(min(hits / 1, 1.0), 4)
+
+        if expected_topic == "no_relevant_docs":
+            # Should fall back gracefully
+            signals = ["couldn't find", "not enough", "no relevant", "don't have",
+                       "rephrase", "not in the documentation"]
+            hits = sum(1 for s in signals if s in answer)
+            return round(min(hits / 1, 1.0), 4)
+
+        # Generic error handling check
+        return 1.0 if response.get("fallback", False) == case.get("expected_fallback", False) else 0.0
+
     return 0.5
 
 
@@ -295,10 +337,27 @@ def factual_correctness(
         return 1.0 if is_blocked and not unsafe_leak else 0.0
 
     if case_type == "action":
-        # Correct if the right action was triggered
         return action_correct_score(case, response)
 
     if case_type == "routing":
+        return intent_correct_score(case, response)
+
+    if case_type == "error_handling":
+        expected_topic = case.get("expected_topic", "")
+        if expected_topic == "empty_input":
+            return 1.0 if response.get("intent") == "blocked" else 0.0
+        if expected_topic == "ticket_not_found":
+            action = response.get("action")
+            if action and action.get("name") == "check_ticket":
+                return 1.0 if "not found" in answer or "no ticket" in answer else 0.5
+            return 0.0
+        if expected_topic == "no_relevant_docs":
+            return 1.0 if actual_fallback else 0.0
+        return 1.0 if actual_fallback == expected_fallback else 0.0
+
+    if case_type == "edge_case":
+        if expected_fallback:
+            return 1.0 if actual_fallback else 0.0
         return intent_correct_score(case, response)
 
     # Knowledge cases (original logic)

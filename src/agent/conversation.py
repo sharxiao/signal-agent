@@ -206,6 +206,7 @@ class SupportAgent:
         history: Optional[list[dict[str, str]]] = None,
         platform_filter: Optional[str] = None,
         pending_action: Optional[PendingAction] = None,
+        user_id: str = "anonymous",
     ) -> dict[str, Any]:
         """
         Process one user turn.
@@ -215,6 +216,7 @@ class SupportAgent:
             history:         Previous conversation turns [{role, content}, ...].
             platform_filter: Optional platform to filter retrieval results.
             pending_action:  In-progress multi-turn action state (from session).
+            user_id:         Current user identifier for ticket/transfer ownership.
 
         Returns:
             A dict with the full turn data plus a "pending_action" key
@@ -250,7 +252,7 @@ class SupportAgent:
                 pending_action = None
             else:
                 pending_action, action_result = continue_pending_action(
-                    pending_action, safe_message
+                    pending_action, safe_message, user_id=user_id
                 )
                 result = ConversationTurn(
                     query=safe_message,
@@ -344,7 +346,7 @@ class SupportAgent:
             # Multi-turn actions: create_ticket, device_transfer
             if route.action_name in ("create_ticket", "device_transfer"):
                 pending_action_new, action_result = start_pending_action(
-                    route.action_name, initial_message=safe_message
+                    route.action_name, initial_message=safe_message, user_id=user_id
                 )
 
                 # Adjust intro based on whether action completed or has pre-filled params
