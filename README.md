@@ -18,10 +18,14 @@ This agent answers Signal support questions using official help center documenta
 - **3 Mock Actions** — Create Support Ticket (multi-turn, 4 params), Check Ticket Status, Device Transfer Request (multi-turn, 3 params)
 - **Multi-turn Conversations** — Sequential parameter collection with validation, cancel detection, and parameter pre-extraction from initial message
 - **Persistent State** — Tickets and transfers stored in JSON, survive across sessions
-- **Conversation Memory** — Chat history passed to LLM for contextual follow-ups
+- **Per-User History Isolation** — Ticket and transfer history is scoped to a user session code rather than a shared global history
+- **Session Resume Support** — Users can start a new session or resume a previous one with a saved session code
+- **Conversation Memory** — Chat history passed to the LLM for contextual follow-ups
 - **Guardrails** — Input guardrails (unsafe requests, prompt injection, manipulation tricks) + output guardrails (hallucination detection, system prompt leakage, source quality checks)
-- **Hybrid Retrieval** — Semantic search (ChromaDB) + BM25 keyword search, merged with Reciprocal Rank Fusion
-- **Evaluation** — 17-case test suite with automated scoring across knowledge, action, guardrail, and routing categories
+- **Semantic Retrieval** — Embedding-based search with ChromaDB over Signal help center chunks
+- **Robust Fallbacks** — Graceful fallback when retrieval evidence is weak or the knowledge base is temporarily unavailable
+- **Password-Protected Public Deployment** — Streamlit app can be deployed to a public URL with password protection for demo access
+- **Evaluation** — Automated scoring across knowledge, action, guardrail, routing, edge-case, and error-handling categories
 
 ---
 
@@ -51,19 +55,19 @@ User Message
             │          │
             ▼          ▼
        ┌─────────┐  ┌──────────────┐
-       │ Actions  │  │ Hybrid RAG   │
-       │ (stateful│  │ (semantic +  │
-       │  JSON)   │  │  BM25 + RRF) │
+       │ Actions  │ │ Semantic RAG │
+       │ (stateful│ │ (ChromaDB +  │
+       │  JSON)   │ │  embeddings) │
        └─────────┘  └──────┬───────┘
                            ▼
                     ┌──────────────┐
                     │  LLM (Qwen3) │
-                    │  Grounded QA  │
+                    │  Grounded QA │
                     └──────┬───────┘
                            ▼
-                    ┌──────────────┐
+                    ┌────────────────┐
                     │Output Guardrail│
-                    └──────┬───────┘
+                    └──────┬─────────┘
                            ▼
                       Response + Sources
 ```
@@ -77,13 +81,13 @@ User Message
 | Language | Python 3.10+ |
 | Agent Framework | Custom (no LangChain) |
 | Vector Database | ChromaDB (persistent, cosine similarity) |
-| Keyword Search | BM25 (in-memory, custom implementation) |
-| Retrieval Fusion | Reciprocal Rank Fusion (RRF) |
+| Retrieval | Semantic vector search over embedded chunks |
 | LLM | Qwen3-30B-A3B (course endpoint) |
 | Embeddings | Course embedding endpoint |
 | UI | Streamlit |
 | Data Source | Signal Help Center (Zendesk API) |
 | State Persistence | JSON file (`data/action_store.json`) |
+| Session Isolation | Streamlit session state + resumable session code |
 
 ---
 
@@ -97,7 +101,7 @@ signal-support-agent/
 │   ├── config.py          # Paths, model names, chunking params
 │   ├── ingest.py          # Fetch articles from Zendesk API
 │   ├── chunker.py         # Clean HTML, detect platform, chunk text
-│   ├── embedder.py        # Embed chunks, ChromaDB storage, BM25 index, hybrid retrieval
+│   ├── embedder.py        # Embed chunks, store them in ChromaDB, and run semantic retrieval
 │   ├── pipeline.py        # End-to-end ingestion pipeline
 │   ├── router.py          # Two-tier intent classification (regex + LLM)
 │   ├── actions.py         # Stateful mock actions with multi-turn param collection
@@ -126,6 +130,16 @@ signal-support-agent/
 
 - Python 3.10+
 - Course API access (student ID in `ID.txt`)
+
+### Steps
+
+```bash
+## Setup & Installation
+
+### Prerequisites
+
+- Python 3.10+
+- Course API access
 
 ### Steps
 
@@ -185,7 +199,9 @@ The chat interface provides:
 - **Multi-turn progress bar** — Visual indicator of parameter collection progress
 - **Confidence badges** — High / Medium / Low confidence on each answer
 - **Source attribution** — Expandable sources with article links and relevance scores
-- **Sidebar** — Ticket and transfer history (persists across sessions)
+- **Sidebar** — Ticket and transfer history scoped to the current user session
+- **Session codes** — Users can start a new session or resume a previous one using a saved session code
+- **Password gate** — Optional password protection for public deployment
 
 ### CLI
 
@@ -204,7 +220,7 @@ python -m src.agent.conversation --json
 ### Running the evaluation
 
 ```bash
-# Run all 17 test cases
+# Run all all test cases
 python eval.py
 
 # Run first N cases only
@@ -214,14 +230,18 @@ python eval.py --limit 5
 python eval.py --no-write
 ```
 
-### Test Case Coverage (17 cases)
+### Test Case Coverage
 
-| Category | Count | What's Tested |
-|----------|-------|---------------|
-| Knowledge QA | 8 | Transfer, backup, verification, PIN, desktop linking, notifications, account deletion |
-| Actions | 3 | Create ticket, check ticket, device transfer |
-| Guardrails | 3 | Unsafe request, prompt injection, manipulation trick |
-| Routing | 3 | Ambiguous query, off-topic, negation handling |
+The evaluation set covers:
+
+| Category | What's Tested |
+|----------|---------------|
+| Knowledge QA | Transfer, backup, verification, PIN, desktop linking, notifications, account deletion, safety number, disappearing messages, group chat, block user |
+| Actions | Create ticket, check ticket, device transfer, alternative ticket phrasing, ticket ID extraction |
+| Guardrails | Unsafe requests, prompt injection, manipulation tricks |
+| Routing | Off-topic queries, ambiguous queries, greeting, negation handling |
+| Edge Cases | Nonexistent features |
+| Error Handling | Empty input, ticket not found, weak retrieval fallback |
 
 ### Metrics
 
@@ -260,6 +280,7 @@ python eval.py --no-write
 - **iOS backup** — Signal does not support standalone backups on iOS; the agent correctly reports this but users may find it unhelpful
 - **Multi-question handling** — When asking multiple questions, retrieval is optimized for the combined query which may not be ideal for each sub-question individually
 - **Conversation memory** — Limited to last 10 turns to avoid token overflow; very long conversations may lose early context
+- **Public deployment session model** — The app uses lightweight session codes rather than a full authentication system, which is appropriate for demo access but not a production-grade account system
 
 ---
 
