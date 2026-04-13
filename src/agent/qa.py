@@ -166,7 +166,7 @@ def _extract_json(text: str) -> dict[str, Any]:
     Handles models that may:
     - Wrap JSON in markdown fences
     - Output text before/after the JSON
-    - Output label:value format instead of JSON (e.g. "Answer: ...\nGrounded: true")
+    - Output label:value format instead of JSON
     - Include thinking/reasoning before the actual JSON
     """
     if text is None:
@@ -193,7 +193,6 @@ def _extract_json(text: str) -> dict[str, Any]:
         pass
 
     # Try to locate the LAST JSON object in the text
-    # (models often think/reason first, then output JSON at the end)
     json_candidates = list(re.finditer(r"\{[^{}]*(?:\{[^{}]*\}[^{}]*)*\}", text, flags=re.DOTALL))
     for match in reversed(json_candidates):
         try:
@@ -203,7 +202,7 @@ def _extract_json(text: str) -> dict[str, Any]:
         except json.JSONDecodeError:
             continue
 
-    # Try any JSON object (less strict)
+    # Try any JSON object
     for match in reversed(json_candidates):
         try:
             parsed = json.loads(match.group(0))
@@ -212,8 +211,7 @@ def _extract_json(text: str) -> dict[str, Any]:
         except json.JSONDecodeError:
             continue
 
-    # Fallback: try to parse label:value format
-    # e.g. "Answer: some text\nGrounded: true\nFallback: false\nCitations: [S1]"
+    # Try label:value format
     label_match = re.search(
         r"(?:^|\n)\s*[Aa]nswer\s*:\s*(.+?)(?=\n\s*[Gg]rounded\s*:|\n\s*[Ff]allback\s*:|\Z)",
         text,
@@ -238,8 +236,7 @@ def _extract_json(text: str) -> dict[str, Any]:
             "reason_if_fallback": reason,
         }
 
-    # Hard fallback — strip any JSON-like metadata from the text
-    # Remove lines that look like metadata fields
+    # Hard fallback
     cleaned_lines = []
     for line in text.split("\n"):
         line_stripped = line.strip().lower()
@@ -249,7 +246,6 @@ def _extract_json(text: str) -> dict[str, Any]:
             "**reason",
         ]):
             continue
-        # Also skip lines that are just "Answer:" headers
         if re.match(r"^\*?\*?answer\*?\*?\s*:?\s*$", line_stripped):
             continue
         cleaned_lines.append(line)
@@ -293,7 +289,6 @@ def _call_llm(messages: list[dict[str, str]]) -> dict[str, Any]:
         raise ValueError(f"No choices returned from LLM: {data}")
 
     message = choices[0].get("message", {}) or {}
-
     content = message.get("content")
 
     if isinstance(content, list):
@@ -354,24 +349,14 @@ def _check_output_quality(
     """
     Post-generation guardrail. Returns a non-empty reason string if the
     answer should be blocked, empty string if it's OK.
-
-    Checks for:
-    1. Answer claims to be grounded but has no citations
-    2. Answer contains signs of hallucination (fabricated URLs, steps not in sources)
-    3. Answer leaks system prompt or internal instructions
-    4. All cited sources have very low retrieval scores
-    5. Duplicate sources — all cited sources are identical content
-    6. Answer content not supported by source content
     """
     answer_lower = answer.lower()
 
-    # Check 1: Claims grounded but no citations
     if grounded and not citations:
         return "Claims grounded but provides no source citations."
 
-    # Check 2: Hallucination signals
     hallucination_signals = [
-        r"https?://(?!support\.signal\.org)\S+",  # URLs not from Signal help
+        r"https?://(?!support\.signal\.org)\S+",
     ]
     for pattern in hallucination_signals:
         if re.search(pattern, answer_lower):
@@ -380,7 +365,6 @@ def _check_output_quality(
             if match and match.group(0) not in chunk_texts:
                 return "Possible hallucination: content not found in retrieved sources."
 
-    # Check 3: System prompt leakage
     leak_patterns = [
         r"system\s*prompt",
         r"my\s+instructions\s+(are|say)",
@@ -391,7 +375,6 @@ def _check_output_quality(
         if re.search(pattern, answer_lower):
             return "Possible system prompt leakage in response."
 
-    # Check 4: All cited sources have very low scores
     if citations and results:
         cited_scores = []
         for i, r in enumerate(results, start=1):
@@ -400,12 +383,9 @@ def _check_output_quality(
         if cited_scores and max(cited_scores) < 0.20:
             return "All cited sources have very low relevance scores."
 
-    # Check 5: All sources are duplicates (same article title)
     if len(results) >= 2:
         titles = [r.get("article_title", "").strip().lower() for r in results if r.get("article_title")]
         if titles and len(set(titles)) == 1:
-            # All sources from the same article — check if answer content
-            # has reasonable overlap with the source content
             source_text = " ".join(r.get("text", "") for r in results).lower()
             answer_words = set(re.findall(r"[a-z]{4,}", answer_lower))
             source_words = set(re.findall(r"[a-z]{4,}", source_text))
@@ -414,7 +394,7 @@ def _check_output_quality(
                 if overlap < 0.15:
                     return "Answer content has very low overlap with source documents."
 
-    return ""  # OK
+    return ""
 
 
 def answer_knowledge_query(
@@ -426,18 +406,6 @@ def answer_knowledge_query(
 ) -> dict[str, Any]:
     """
     Main entry point for the QA layer.
-
-    Returns:
-    {
-        "query": str,
-        "answer": str,
-        "grounded": bool,
-        "fallback": bool,
-        "reason_if_fallback": str,
-        "citations": [str],
-        "sources": [...],
-        "retrieved_chunks": [...],
-    }
     """
     query = _normalize_query(query)
     if not query:
@@ -452,15 +420,31 @@ def answer_knowledge_query(
             "retrieved_chunks": [],
         }
 
-    collection, model = get_retriever()
-    results = query_collection(
-        collection,
-        model,
-        query,
-        n_results=n_results,
-        platform_filter=platform_filter,
-        category_filter=category_filter,
-    )
+    try:
+        collection, model = get_retriever()
+        results = query_collection(
+            collection,
+            model,
+            query,
+            n_results=n_results,
+            platform_filter=platform_filter,
+            category_filter=category_filter,
+        )
+    except Exception as e:
+        log.exception("Retriever failed")
+        return {
+            "query": query,
+            "answer": (
+                "I'm having trouble accessing the Signal help knowledge base right now. "
+                "Please try again in a moment."
+            ),
+            "grounded": False,
+            "fallback": True,
+            "reason_if_fallback": f"Retriever error: {e}",
+            "citations": [],
+            "sources": [],
+            "retrieved_chunks": [],
+        }
 
     if _evidence_is_weak(results):
         sources = _dedupe_sources(results)
@@ -510,7 +494,6 @@ def answer_knowledge_query(
             "retrieved_chunks": results,
         }
 
-    # Normalize model output
     answer = str(llm_output.get("answer", "")).strip()
     grounded = bool(llm_output.get("grounded", False))
     fallback = bool(llm_output.get("fallback", False))
@@ -520,11 +503,9 @@ def answer_knowledge_query(
     if not isinstance(citations, list):
         citations = []
 
-    # Keep only valid source IDs that actually exist
     valid_ids = {f"S{i}" for i in range(1, len(results) + 1)}
     citations = [c for c in citations if c in valid_ids]
 
-    # --- OUTPUT GUARDRAIL: check for hallucination / low-quality answers ---
     guardrail_issue = _check_output_quality(answer, citations, results, grounded)
     if guardrail_issue:
         log.warning(f"Output guardrail triggered: {guardrail_issue}")
@@ -538,7 +519,6 @@ def answer_knowledge_query(
         reason_if_fallback = f"Output guardrail: {guardrail_issue}"
         citations = []
 
-    # Build citation-ready source objects aligned with S1, S2, ...
     sources = []
     for i, r in enumerate(results, start=1):
         source_id = f"S{i}"
@@ -555,7 +535,6 @@ def answer_knowledge_query(
                 }
             )
 
-    # Defensive fallback if model returns empty answer
     if not answer:
         answer = (
             "I couldn't generate a reliable answer from the retrieved Signal help documentation."
