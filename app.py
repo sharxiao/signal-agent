@@ -15,6 +15,7 @@ Features:
 from __future__ import annotations
 
 import json
+import secrets
 from pathlib import Path
 
 import streamlit as st
@@ -68,16 +69,30 @@ if not check_password():
     st.stop()
 
 # ---------------------------------------------------------------------------
-# Demo login (user identification)
+# Demo login (display name + resumable session code)
 # ---------------------------------------------------------------------------
 
-def get_user_id() -> str | None:
-    """Show a simple login screen and return the user ID."""
+def get_user_session() -> tuple[str | None, str | None]:
+    """
+    Return:
+      - user_id: internal ID used for record isolation
+      - display_name: user-facing label
+
+    Users can either:
+      1. Start a new session (generates a new session code)
+      2. Resume an existing session with a session code
+
+    IMPORTANT:
+    - display_name is only for display
+    - user_id/session_code is the real storage key
+    """
     if "user_id" not in st.session_state:
         st.session_state.user_id = None
+    if "display_name" not in st.session_state:
+        st.session_state.display_name = None
 
-    if st.session_state.user_id:
-        return st.session_state.user_id
+    if st.session_state.user_id and st.session_state.display_name:
+        return st.session_state.user_id, st.session_state.display_name
 
     st.markdown(
         """
@@ -86,37 +101,72 @@ def get_user_id() -> str | None:
             <div style="font-size: 40px; margin-bottom: 8px;">💬</div>
             <h1 style="color: white; margin: 0; font-size: 1.8rem;">Signal Support Agent</h1>
             <p style="color: rgba(255,255,255,0.85); margin: 8px 0 0; font-size: 0.9rem;">
-                Enter your name to get started
+                Start a new session or resume an existing one
             </p>
         </div>
         """,
         unsafe_allow_html=True,
     )
 
-    col1, col2, col3 = st.columns([1, 2, 1])
-    with col2:
-        name = st.text_input(
-            "Your name",
-            key="login_name",
-            placeholder="e.g. Alice, Bob, ta-demo",
-            label_visibility="collapsed",
+    tab_new, tab_resume = st.tabs(["Start New Session", "Resume Session"])
+
+    with tab_new:
+        col1, col2, col3 = st.columns([1, 2, 1])
+        with col2:
+            name = st.text_input(
+                "Your name",
+                key="login_name",
+                placeholder="e.g. Alice, Bob, ta-demo",
+                label_visibility="collapsed",
+            )
+            if st.button("Start Chat →", key="start_new_session", use_container_width=True, type="primary"):
+                if name.strip():
+                    st.session_state.display_name = name.strip()
+                    st.session_state.user_id = secrets.token_hex(8)
+                    st.session_state.show_session_code_once = True
+                    st.rerun()
+                else:
+                    st.warning("Please enter a name.")
+
+        st.caption(
+            "A unique session code will be generated for you. Save it if you want "
+            "to return to the same ticket and transfer history later."
         )
-        if st.button("Start Chat →", use_container_width=True, type="primary"):
-            if name.strip():
-                st.session_state.user_id = name.strip().lower()
-                st.rerun()
-            else:
-                st.warning("Please enter a name.")
 
-    st.caption(
-        "Each user has their own ticket and transfer history. "
-        "Try logging in as different users to see isolated data."
-    )
-    return None
+    with tab_resume:
+        col1, col2, col3 = st.columns([1, 2, 1])
+        with col2:
+            resume_name = st.text_input(
+                "Display name",
+                key="resume_name",
+                placeholder="e.g. Alice",
+                help="This is only for display inside the UI.",
+            )
+            session_code = st.text_input(
+                "Session code",
+                key="resume_code",
+                placeholder="Paste your saved session code",
+            )
+            if st.button("Resume Session", key="resume_session", use_container_width=True):
+                if not resume_name.strip():
+                    st.warning("Please enter a display name.")
+                elif not session_code.strip():
+                    st.warning("Please enter your session code.")
+                else:
+                    st.session_state.display_name = resume_name.strip()
+                    st.session_state.user_id = session_code.strip()
+                    st.session_state.show_session_code_once = False
+                    st.rerun()
+
+        st.caption(
+            "Use the session code from an earlier visit to restore that user's records."
+        )
+
+    return None, None
 
 
-user_id = get_user_id()
-if not user_id:
+user_id, display_name = get_user_session()
+if not user_id or not display_name:
     st.stop()
 
 # ---------------------------------------------------------------------------
@@ -249,6 +299,19 @@ st.markdown(
         font-weight: 500;
         background: {SIGNAL_BLUE_LIGHT};
         color: {SIGNAL_BLUE_DARK};
+    }}
+    .session-code-box {{
+        background: #FFF8E1;
+        border: 1px solid #F5D67A;
+        border-radius: 10px;
+        padding: 0.8rem 1rem;
+        margin-bottom: 1rem;
+        font-size: 0.85rem;
+    }}
+    .session-code {{
+        font-family: monospace;
+        font-weight: 700;
+        color: #6B4F00;
     }}
     </style>
     """,
@@ -461,14 +524,30 @@ render_header()
 
 agent = load_agent()
 
+# Show session code once after new session creation
+if st.session_state.get("show_session_code_once", False):
+    st.markdown(
+        f"""
+        <div class="session-code-box">
+            <strong>Save this session code</strong> if you want to resume this user's records later:<br>
+            <span class="session-code">{st.session_state.user_id}</span>
+        </div>
+        """,
+        unsafe_allow_html=True,
+    )
+    if st.button("Got it", key="hide_session_code_notice"):
+        st.session_state.show_session_code_once = False
+        st.rerun()
+
 # --- Sidebar ---
 st.sidebar.title("📋 Actions & History")
 
-# Show current user with badge
+# Show current display name with badge
 st.sidebar.markdown(
-    f'<span class="user-badge">👤 {st.session_state.user_id}</span>',
+    f'<span class="user-badge">👤 {st.session_state.display_name}</span>',
     unsafe_allow_html=True,
 )
+st.sidebar.caption(f"Session code: `{st.session_state.user_id}`")
 
 col_new, col_switch = st.sidebar.columns(2)
 with col_new:
@@ -479,8 +558,10 @@ with col_new:
 with col_switch:
     if st.button("🚪 Switch User", use_container_width=True):
         st.session_state.user_id = None
+        st.session_state.display_name = None
         st.session_state.messages = []
         st.session_state.pending_action = None
+        st.session_state.show_session_code_once = False
         st.rerun()
 
 render_sidebar_history()
@@ -491,7 +572,7 @@ if "messages" not in st.session_state:
         {
             "role": "assistant",
             "content": (
-                f"Hi {st.session_state.user_id.title()}! I can help with Signal support questions — "
+                f"Hi {st.session_state.display_name}! I can help with Signal support questions — "
                 "setup, troubleshooting, privacy, backups, transfers, "
                 "and verification. I can also create a support ticket "
                 "or help with a device transfer. What do you need?"
