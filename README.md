@@ -212,6 +212,12 @@ python -m src.agent.conversation
 # With JSON output
 python -m src.agent.conversation --json
 ```
+---
+
+## Demo & Deployment
+
+- **Backup demo video:** https://www.dropbox.com/scl/fi/uyajtjdrqb266u2zzadnb/Final-Project-Backup-Demo-Team-8.mp4?rlkey=jg8fhbmyavaugh15lt4rr8k0b&st=bqry86d2&dl=0
+- **Public Streamlit app:** https://signalagent-zjweeyqsjssqjjwqufnxz4.streamlit.app/
 
 ---
 
